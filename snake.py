@@ -1,12 +1,22 @@
 #!/usr/bin/env python
 # coding: utf8
 
+import sys
+
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-builder = Gtk.Builder()
-builder.add_from_file("snake.ui")
+from functools import wraps
+
+def echo_func(func):
+    """went wrong with wraps"""
+    #@wraps
+    def wrapper(*args, **kwargs):
+        print("calling {} ..".format(func.__name__))
+        return func(*args, **kwargs)
+
+    return wrapper
 
 class Handler:
     @classmethod
@@ -22,18 +32,54 @@ class Handler:
         cr.fill()
 
     @classmethod
+    def on_toggled(cls, widget, data):
+        pass
+
+    @classmethod
     def on_destroy(cls, *args):
         Gtk.main_quit()
 
-class App:
-    def __init__(self):
-        win = builder.get_object("Snake")
-        win.connect("destroy", Handler.on_destroy)
-        win.show_all()
+class App(Gtk.Application):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                application_id="rt.game.snake",
+                **kwargs)
 
-        draw = builder.get_object("DRAW")
-        draw.connect("draw", Handler.on_draw)
-        #draw.set_size_request(40, 40)
+        self.window = None
 
-app = App()
-Gtk.main()
+    def init_ui(self):
+        self.builder = Gtk.Builder()
+        self.builder.add_from_file("snake.ui")
+
+        # main window
+        self.window = self.builder.get_object("Snake")
+        self.window.show_all()
+
+        """attach the window to app"""
+        self.window.set_application(self)
+
+        # draw area
+        self.draw = self.builder.get_object("DRAW")
+        self.draw.connect("draw", Handler.on_draw)
+        #self.draw.set_size_request(40, 40)
+
+        # spin of speed
+        speed_adj = Gtk.Adjustment(**{ "value": 8, "lower":1, "upper":40,
+            "step_increment":1, "page_increment":10, "page_size":0 })
+        self.bt_speed = self.builder.get_object("BT_SPEED")
+        self.bt_speed.set_adjustment(speed_adj)
+
+
+    def do_startup(self):
+        """replace wtth super(): loop?"""
+        Gtk.Application.do_startup(self)
+
+    def do_activate(self):
+        if not self.window:
+            self.init_ui()
+
+        self.window.present()
+
+if __name__ == "__main__":
+    app = App()
+    app.run(sys.argv)
