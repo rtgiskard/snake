@@ -91,6 +91,8 @@
               <object class="GtkSpinButton" id="BT_SPEED">
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
+                <property name="max_length">2</property>
+                <property name="width_chars">2</property>
                 <property name="input_purpose">number</property>
                 <property name="snap_to_ticks">True</property>
                 <property name="numeric">True</property>
@@ -112,6 +114,7 @@
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
+                    <property name="use_alpha">True</property>
                     <property name="rgba">rgb(114,159,207)</property>
                   </object>
                   <packing>
@@ -137,6 +140,7 @@
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
+                    <property name="use_alpha">True</property>
                     <property name="rgba">rgb(0,0,0)</property>
                   </object>
                   <packing>
@@ -153,7 +157,7 @@
             </child>
             <child>
               <object class="GtkToggleButton" id="TG_AUTO">
-                <property name="label" translatable="yes">自动/手动</property>
+                <property name="label" translatable="yes">手动/自动</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
@@ -166,7 +170,7 @@
             </child>
             <child>
               <object class="GtkToggleButton" id="TG_PAUSE">
-                <property name="label" translatable="yes">暂停/开动</property>
+                <property name="label" translatable="yes">开动/暂停</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
@@ -265,7 +269,17 @@
               <object class="GtkComboBox" id="AREA">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="tooltip_text" translatable="yes">活动区域大小</property>
+                <property name="tooltip_text" translatable="yes">活动区域大小: [width]x[height]
+
+width, height: [10, 1000)</property>
+                <property name="has_entry">True</property>
+                <child internal-child="entry">
+                  <object class="GtkEntry">
+                    <property name="can_focus">True</property>
+                    <property name="max_length">7</property>
+                    <property name="width_chars">7</property>
+                  </object>
+                </child>
               </object>
               <packing>
                 <property name="left_attach">1</property>
