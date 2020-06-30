@@ -4,8 +4,6 @@
   <requires lib="gtk+" version="3.20"/>
   <object class="GtkApplicationWindow" id="Snake">
     <property name="can_focus">False</property>
-    <property name="default_width">800</property>
-    <property name="default_height">600</property>
     <child type="titlebar">
       <placeholder/>
     </child>
@@ -54,6 +52,7 @@
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
                 <property name="label" translatable="yes">0</property>
+				<property name="tooltip_text" translatable="yes">当前长度，块</property>
                 <attributes>
                   <attribute name="style" value="oblique"/>
                   <attribute name="weight" value="bold"/>
@@ -97,6 +96,7 @@
                 <property name="snap_to_ticks">True</property>
                 <property name="numeric">True</property>
                 <property name="update_policy">if-valid</property>
+                <property name="tooltip_text" translatable="yes">每秒前进步数：[1, 20]</property>
               </object>
               <packing>
                 <property name="left_attach">1</property>
@@ -108,12 +108,14 @@
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
                 <property name="halign">center</property>
+                <property name="tooltip_text" translatable="yes">均为黑色时，前景色自动迷彩</property>
                 <property name="spacing">2</property>
                 <child>
                   <object class="GtkColorButton" id="COLOR_FG">
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
+                    <property name="tooltip_text" translatable="yes">前景色</property>
                     <property name="use_alpha">True</property>
                     <property name="rgba">rgb(114,159,207)</property>
                   </object>
@@ -140,6 +142,7 @@
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
+                    <property name="tooltip_text" translatable="yes">背景色</property>
                     <property name="use_alpha">True</property>
                     <property name="rgba">rgb(0,0,0)</property>
                   </object>
@@ -161,6 +164,7 @@
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
+                <property name="tooltip_text" translatable="yes">热键：'A'</property>
               </object>
               <packing>
                 <property name="left_attach">0</property>
@@ -174,6 +178,7 @@
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
+                <property name="tooltip_text" translatable="yes">热键：'P'</property>
               </object>
               <packing>
                 <property name="left_attach">0</property>
@@ -182,16 +187,50 @@
               </packing>
             </child>
             <child>
+              <object class="GtkLabel">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">区域</property>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">3</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBox" id="AREA_COMBO">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+				<property name="tooltip_text" translatable="yes">活动区域大小: 宽x高，边长范围：[10, 999]，块
+屏幕分辨率内调整窗口尺寸，超出时缩放绘图</property>
+                <property name="has_entry">True</property>
+                <child internal-child="entry">
+                  <object class="GtkEntry">
+                    <property name="can_focus">True</property>
+                    <property name="max_length">7</property>
+                    <property name="width_chars">7</property>
+                  </object>
+                </child>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="top_attach">3</property>
+              </packing>
+            </child>
+            <child>
               <object class="GtkGrid">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
+                <property name="tooltip_text" translatable="yes">键盘控制（须 'ESC' 键取消焦点）</property>
                 <property name="row_homogeneous">True</property>
                 <property name="column_homogeneous">True</property>
                 <child>
-                  <object class="GtkIconView" id="ICON_LEFT">
+                  <object class="GtkImage" id="IMG_LEFT">
                     <property name="visible">True</property>
-                    <property name="can_focus">True</property>
-                    <property name="margin">6</property>
+                    <property name="can_focus">False</property>
+                    <property name="halign">end</property>
+                    <property name="valign">center</property>
+                    <property name="stock">gtk-missing-image</property>
                   </object>
                   <packing>
                     <property name="left_attach">0</property>
@@ -199,10 +238,12 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkIconView" id="ICON_UP">
+                  <object class="GtkImage" id="IMG_UP">
                     <property name="visible">True</property>
-                    <property name="can_focus">True</property>
-                    <property name="margin">6</property>
+                    <property name="can_focus">False</property>
+                    <property name="halign">center</property>
+                    <property name="valign">end</property>
+                    <property name="stock">gtk-missing-image</property>
                   </object>
                   <packing>
                     <property name="left_attach">1</property>
@@ -210,25 +251,29 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkIconView" id="ICON_DOWN">
+                  <object class="GtkImage" id="IMG_RIGHT">
                     <property name="visible">True</property>
-                    <property name="can_focus">True</property>
-                    <property name="margin">6</property>
-                  </object>
-                  <packing>
-                    <property name="left_attach">1</property>
-                    <property name="top_attach">2</property>
-                  </packing>
-                </child>
-                <child>
-                  <object class="GtkIconView" id="ICON_RIGHT">
-                    <property name="visible">True</property>
-                    <property name="can_focus">True</property>
-                    <property name="margin">6</property>
+                    <property name="can_focus">False</property>
+                    <property name="halign">start</property>
+                    <property name="valign">center</property>
+                    <property name="stock">gtk-missing-image</property>
                   </object>
                   <packing>
                     <property name="left_attach">2</property>
                     <property name="top_attach">1</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkImage" id="IMG_DOWN">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="halign">center</property>
+                    <property name="valign">start</property>
+                    <property name="stock">gtk-missing-image</property>
+                  </object>
+                  <packing>
+                    <property name="left_attach">1</property>
+                    <property name="top_attach">2</property>
                   </packing>
                 </child>
                 <child>
@@ -252,38 +297,6 @@
                 <property name="top_attach">6</property>
                 <property name="width">2</property>
                 <property name="height">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="visible">True</property>
-                <property name="can_focus">False</property>
-                <property name="label" translatable="yes">区域</property>
-              </object>
-              <packing>
-                <property name="left_attach">0</property>
-                <property name="top_attach">3</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBox" id="AREA">
-                <property name="visible">True</property>
-                <property name="can_focus">False</property>
-                <property name="tooltip_text" translatable="yes">活动区域大小: [width]x[height]
-
-width, height: [10, 1000)</property>
-                <property name="has_entry">True</property>
-                <child internal-child="entry">
-                  <object class="GtkEntry">
-                    <property name="can_focus">True</property>
-                    <property name="max_length">7</property>
-                    <property name="width_chars">7</property>
-                  </object>
-                </child>
-              </object>
-              <packing>
-                <property name="left_attach">1</property>
-                <property name="top_attach">3</property>
               </packing>
             </child>
           </object>
