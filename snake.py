@@ -161,6 +161,7 @@ class App(Gtk.Application):
 				'speed': 8,
 				'speed_adj': { 'value':1, 'lower':1, 'upper':20,
 					'step_increment':1, 'page_increment':10, 'page_size':0 },
+				'image_icon': './data/icon/snake.svg',
 				'image_arrow': './data/pix/arrow.svg',
 				'image_arrow_key': './data/pix/arrow-key.svg',
 				}
@@ -248,6 +249,7 @@ class App(Gtk.Application):
 				widget.set_rgba(rgba)
 
 	def load_image(self):
+		self.pix_icon = Pixbuf.new_from_file(self.data['image_icon'])
 		self.pix_arrow = Pixbuf.new_from_file_at_size(self.data['image_arrow'], 28, 28)
 		self.pix_arrow_key = Pixbuf.new_from_file_at_size(self.data['image_arrow_key'], 28, 28)
 
@@ -255,9 +257,13 @@ class App(Gtk.Application):
 		self.builder = Gtk.Builder()
 		self.builder.add_from_file('snake.ui')
 
+		# load image resource
+		self.load_image()
+
 		# main window
 		self.window = self.builder.get_object('Snake')
 		self.window.set_title('Snake')
+		self.window.set_icon(self.pix_icon)
 		self.window.show_all()
 
 		# attach the window to app
@@ -293,9 +299,6 @@ class App(Gtk.Application):
 		self.color_bg.connect('color-set', Handler.on_color_set, self)
 		# set color from data on init
 		self.set_color(self.color_fg, self.color_bg)
-
-		# load image resource
-		self.load_image()
 
 		# arrow image
 		self.arrows = {}
