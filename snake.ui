@@ -51,8 +51,8 @@
               <object class="GtkLabel" id="LB_length">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
+                <property name="tooltip_text" translatable="yes">当前长度，块</property>
                 <property name="label" translatable="yes">0</property>
-				<property name="tooltip_text" translatable="yes">当前长度，块</property>
                 <attributes>
                   <attribute name="style" value="oblique"/>
                   <attribute name="weight" value="bold"/>
@@ -90,13 +90,13 @@
               <object class="GtkSpinButton" id="BT_SPEED">
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
+                <property name="tooltip_text" translatable="yes">每秒前进步数：[1, 20]</property>
                 <property name="max_length">2</property>
                 <property name="width_chars">2</property>
                 <property name="input_purpose">number</property>
                 <property name="snap_to_ticks">True</property>
                 <property name="numeric">True</property>
                 <property name="update_policy">if-valid</property>
-                <property name="tooltip_text" translatable="yes">每秒前进步数：[1, 20]</property>
               </object>
               <packing>
                 <property name="left_attach">1</property>
@@ -107,8 +107,8 @@
               <object class="GtkBox">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="halign">center</property>
                 <property name="tooltip_text" translatable="yes">均为黑色时，前景色自动迷彩</property>
+                <property name="halign">center</property>
                 <property name="spacing">2</property>
                 <child>
                   <object class="GtkColorButton" id="COLOR_FG">
@@ -201,7 +201,7 @@
               <object class="GtkComboBox" id="AREA_COMBO">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-				<property name="tooltip_text" translatable="yes">活动区域大小: 宽x高，边长范围：[10, 999]，块
+                <property name="tooltip_text" translatable="yes">活动区域大小: 宽x高，边长范围：[10, 999]，块
 屏幕分辨率内调整窗口尺寸，超出时缩放绘图</property>
                 <property name="has_entry">True</property>
                 <child internal-child="entry">
@@ -277,7 +277,17 @@
                   </packing>
                 </child>
                 <child>
-                  <placeholder/>
+                  <object class="GtkImage" id="IMG_SNAKE">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="halign">center</property>
+                    <property name="valign">center</property>
+                    <property name="stock">gtk-missing-image</property>
+                  </object>
+                  <packing>
+                    <property name="left_attach">1</property>
+                    <property name="top_attach">1</property>
+                  </packing>
                 </child>
                 <child>
                   <placeholder/>

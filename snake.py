@@ -6,7 +6,7 @@ import sys
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk
-from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation
+from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 
 from functools import wraps
 
@@ -252,6 +252,9 @@ class App(Gtk.Application):
 		self.pix_icon = Pixbuf.new_from_file(self.data['image_icon'])
 		self.pix_arrow = Pixbuf.new_from_file_at_size(self.data['image_arrow'], 28, 28)
 		self.pix_arrow_key = Pixbuf.new_from_file_at_size(self.data['image_arrow_key'], 28, 28)
+
+		img_logo = self.builder.get_object('IMG_SNAKE')
+		img_logo.set_from_pixbuf(self.pix_icon.scale_simple(20, 20, InterpType.BILINEAR))
 
 	def init_ui(self):
 		self.builder = Gtk.Builder()
