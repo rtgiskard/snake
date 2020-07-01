@@ -9,6 +9,7 @@ from gi.repository import Gtk, Gdk
 from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 
 from functools import wraps
+import random
 
 def echo_func(func):
 	@wraps(func)
@@ -28,6 +29,140 @@ def echo_func_count(func):
 		return func(*args, **kwargs)
 
 	return wrapper
+
+class Rotation:
+	KEEP = [[1, 0], [0, 1]]
+	COUNTERCLOCKWISE = [[0, 1], [-1, 0]]
+	CLOCKWISE = [[0, -1], [1, 0]]
+
+class Dot:
+	def __init__(self, x=0, y=0):
+		self.x = x
+		self.y = y
+
+	def __repr__(self):
+		return "({}, {})".format(self.x, self.y)
+
+class Vector(Dot):
+	def __init__(self, x=0, y=0):
+		super().__init__(x, y)
+
+	def __neg__(self):
+		return Vector(-self.x, -self.y)
+
+	def __eq__(self, rhs):
+		return self.x == rhs.x and self.y == rhs.y
+
+	def __add__(self, rhs):
+		return Vector(self.x + rhs.x, self.y + rhs.y)
+
+	def __sub__(self, rhs):
+		return Vector(self.x - rhs.x, self.y - rhs.y)
+
+	def __iadd__(self, rhs):
+		self.x += rhs.x
+		self.y += rhs.y
+		return self
+
+	def __isub__(self, rhs):
+		self.x -= rhs.x
+		self.y -= rhs.y
+		return self
+
+	# todo: x / int
+
+	# the dot product: self \cdot vec
+	def dprod(self, vec):
+		return self.x * vec.x + self.y * vec.y
+
+	# the cross product: self \times vec
+	def cprod(self, vec):
+		return self.x * vec.y - self.y * vec.x
+
+	def trans_linear(self, matrix, inplace=True):
+		new_x = matrix[0][0] * self.x + matrix[1][0] * self.y
+		new_y = matrix[0][1] * self.x + matrix[1][1] * self.y
+		if inplace:
+			self.x, self.y = (new_x, new_y)
+			return self
+		else:
+			return Vector(new_x, new_y)
+
+
+class Snake:
+	def __init__(self, width=40, height=40):
+
+		self.area_w = width
+		self.area_h = height
+
+		self.body = [ Vector(int(width/2), int(height/2)) ]
+
+		self.food = Vector(x, y)
+
+		self.aim = Vector(0,1)
+
+	@property
+	def length(self):
+		return len(self.body)
+
+	@property
+	def vec_head2aim(self):
+		return Vector(self.aim - self.head)
+
+	@property
+	def head(self):
+		return self.body[0]
+	@head.setter
+	def head(self, point):
+		self.head.x = point.x
+		self.head.y = point.y
+
+	def is_inside(self, point):
+		return ( point.x >= 0 and point.x < self.area_w
+				and point.y >= 0 and point.y < self.area_h )
+
+	def is_full(self):
+		return len(self.body) == self.area_h * self.area_w
+
+	def is_valid(self, aim):
+		head_next = self.head + aim
+		return self.is_inside(head_next) and head_next not in self.body
+
+	def move(self, aim=None):
+		if not aim:
+			aim = self.aim
+
+		# insert the new head, pop old tail
+		self.body.insert(0, self.head + aim)
+		self.body.pop()
+
+	def food_new(self):
+		if self.is_full():
+			return None
+
+		# make sure the food is not in body
+		while self.food in self.body:
+			self.food = Vector(random.randrange(0, width), random.randrange(0, height))
+
+		return self.food
+
+	def get_fast_aim(self):
+		cprod = self.vec_head2aim.cprod(self.aim)
+		if cprod > 0:
+			matrix = Rotation.COUNTERCLOCKWISE
+		elif cprod < 0:
+			matrix = Rotation.CLOCKWISE
+		else:				# cprod == 0: 同向，反向，到达
+			dprod = self.vec_head2aim.dprod(self.aim)
+			if dprod >= 0:		# 同向或到达，保持
+				return self.aim
+			else:				# 反向，随机转向
+				matrix = random.choice([Rotation.COUNTERCLOCKWISE, Rotation.CLOCKWISE])
+
+		return self.aim.trans_linear(matrix, inplace=False)
+
+	def get_aim(self):
+		pass
 
 class Handler:
 	@classmethod
@@ -145,7 +280,6 @@ class App(Gtk.Application):
 
 		self.window = None
 
-		# todo: check the initial value
 		self.data = {
 				'snake_width': 8,
 				'block_size': 10,
