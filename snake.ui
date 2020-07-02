@@ -173,8 +173,8 @@
               </packing>
             </child>
             <child>
-              <object class="GtkToggleButton" id="TG_PAUSE">
-                <property name="label" translatable="yes">开动/暂停</property>
+              <object class="GtkToggleButton" id="TG_RUN">
+                <property name="label" translatable="yes">暂停/开动</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
