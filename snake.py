@@ -2,12 +2,12 @@
 # coding: utf8
 
 import sys
-import random
+import random, math
 from functools import wraps
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GLib
 from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 import cairo
 
@@ -116,8 +116,8 @@ class Snake:
 		self.area_w = width
 		self.area_h = height
 
-		self.body = [ Vector(int(width/2), int(height/2)) ]
-		self.food = self.food_new()
+		# food && body
+		self.snake_reset()
 
 		self.aim = Vector(0,1)
 
@@ -131,7 +131,7 @@ class Snake:
 
 	@property
 	def vec_head2food(self):
-		return Vector(self.food - self.head)
+		return self.food - self.head
 
 	@property
 	def head(self):
@@ -140,6 +140,9 @@ class Snake:
 	def head(self, point):
 		self.head.x = point.x
 		self.head.y = point.y
+
+	def is_died(self):
+		return self.head in self.body[1:] or not self.is_inside(self.head)
 
 	def is_inside(self, point):
 		return ( point.x >= 0 and point.x < self.area_w
@@ -156,33 +159,46 @@ class Snake:
 		# todo: more check
 		return self.is_aim_valid(aim)
 
-	def area_resize(self, width, height):
+	def snake_reset(self):
+		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
+		self.food = self.new_food()
+
+	def area_resize(self, width, height, reset=False):
+		if not reset:
+			for pos in [ self.food, *self.body ]:
+				# the original pos is inside
+				if pos.x >= width or pos.y >= height:
+					return False
+
 		self.area_w = width
 		self.area_h = height
 
+		return True
+
 	def move(self, aim=None):
-		if not aim:
+		if aim: # set new direction
+			self.aim = aim
+		else:	# keep moving
 			aim = self.aim
 
-		# insert the new head, pop old tail
+		# insert the new head
 		self.body.insert(0, self.head + aim)
 
+		if self.is_died():
+			return False
+
 		# if got food, generate new
-		if self.food == self.head:
-			self.food = self.food_new()
+		if self.head == self.food:
+			self.food = self.new_food()
 		else:
 			self.body.pop()
 
-	def auto_move(self):
-		next_aim = self.get_next_aim()
-		if next_aim:
-			self.move(next_aim)
-			return True
-		else:
-			print('game over, died')
-			return False
+		return True
 
-	def food_new(self):
+	def auto_move(self):
+		return self.move( self.get_next_aim() )
+
+	def new_food(self):
 		if self.is_full():
 			return None
 
@@ -199,18 +215,33 @@ class Snake:
 			else:
 				space_id -= 1
 
-	def get_fast_aim(self):
+	def get_fast_aim(self, direct=True):
 		pd_cross = self.aim.pd_cross(self.vec_head2food)
-		if pd_cross > 0:
-			matrix = TransMatrix.ROTATE_LEFT
-		elif pd_cross < 0:
-			matrix = TransMatrix.ROTATE_RIGHT
-		else:				# pd_cross == 0: 同向，反向，到达
-			pd_dot = self.aim.pd_dot(self.vec_head2food)
-			if pd_dot >= 0:		# 同向或到达，保持
+		pd_dot = self.aim.pd_dot(self.vec_head2food)
+
+
+		if direct:
+			""" 斜线 """
+			if pd_cross > 0:
+				matrix = TransMatrix.ROTATE_LEFT
+			elif pd_cross < 0:
+				matrix = TransMatrix.ROTATE_RIGHT
+			else:				# pd_cross == 0: 同向，反向，到达
+				if pd_dot >= 0:		# 同向或到达，保持
+					return self.aim
+				else:				# 反向，随机转向
+					matrix = random.choice([TransMatrix.ROTATE_LEFT, TransMatrix.ROTATE_RIGHT])
+		else:
+			""" 少转弯 """
+			if pd_dot > 0:		# 前方，保持
 				return self.aim
-			else:				# 反向，随机转向
-				matrix = random.choice([TransMatrix.ROTATE_LEFT, TransMatrix.ROTATE_RIGHT])
+			else:				# 垂直或后方
+				if pd_cross > 0:	# 左后
+					matrix = TransMatrix.ROTATE_LEFT
+				elif pd_cross < 0:	# 右后
+					matrix = TransMatrix.ROTATE_RIGHT
+				else:				# 反向，随机转向
+					matrix = random.choice([TransMatrix.ROTATE_LEFT, TransMatrix.ROTATE_RIGHT])
 
 		return self.aim.trans_linear(matrix, inplace=False)
 
@@ -222,7 +253,7 @@ class Snake:
 		aim_choices.remove(aim_fast)
 
 		# switch random
-		if radom.randint(0,1):
+		if random.randint(0,1):
 			aim_t = aim_choices[0]
 			aim_choices[0] = aim_choices[1]
 			aim_choices[1] = aim_t
@@ -260,6 +291,12 @@ class Handler:
 			# disactive combo when the snake is run
 			app.area_combo.set_sensitive(not active_state)
 
+			if active_state:
+				app.timeout_id = GLib.timeout_add(1000/app.data['speed'], app.timer_move, None)
+			else:
+				if app.timeout_id:
+					GLib.source_remove(app.timeout_id)
+
 	@classmethod
 	def on_combo_changed(cls, widget, app):
 		t_iter = widget.get_active_iter()
@@ -272,6 +309,11 @@ class Handler:
 	@classmethod
 	def on_combo_entry_activate(cls, widget, app):
 		entry_text = widget.get_text()
+
+		# if text not changed
+		if entry_text == app.get_block_area_text():
+			return
+
 		if app.sync_block_area_from_text(entry_text):
 			# text valid and set
 
@@ -305,7 +347,6 @@ class Handler:
 
 	@classmethod
 	def on_keyboard_event(cls, widget, event, app):
-
 		keyname = Gdk.keyval_name(event.keyval).lower()
 
 		KEY_PRESS = (event.type == Gdk.EventType.KEY_PRESS)
@@ -326,16 +367,23 @@ class Handler:
 		if keyname in [ 'up', 'down', 'left', 'right' ]:
 			if KEY_PRESS:
 				pixbuf = app.pix_arrow_key
+				# 非反向即可转向
+				if app.snake.aim != -app.map_arrow[keyname][1]:
+					app.snake.aim = app.map_arrow[keyname][1]
 			elif KEY_RELEASE:
 				pixbuf = app.pix_arrow
 
-			app.arrows[keyname].set_from_pixbuf(pixbuf.rotate_simple(app.map_rotation[keyname]))
+			app.arrows[keyname].set_from_pixbuf(pixbuf.rotate_simple(app.map_arrow[keyname][0]))
 		elif KEY_PRESS and keyname == 'p':
 			state = app.tg_run.get_active()
 			app.tg_run.set_active(not state)
 		elif KEY_PRESS and keyname == 'a':
 			state = app.tg_auto.get_active()
 			app.tg_auto.set_active(not state)
+		elif KEY_PRESS and keyname == 'bracketleft':
+			app.bt_speed.spin(Gtk.SpinType.STEP_BACKWARD, 1)
+		elif KEY_PRESS and keyname == 'bracketright':
+			app.bt_speed.spin(Gtk.SpinType.STEP_FORWARD, 1)
 
 		return True
 
@@ -347,10 +395,10 @@ class App(Gtk.Application):
 
 		self.data = {
 				'snake_width': 8,
-				'block_size': 10,
+				'block_size': 16,
 				'block_area': {'width':40, 'height':40},
 				'block_area_limit': {'min':10, 'max':999},
-				'block_area_margin': 20,
+				'block_area_margin': 10,
 				'block_area_scale': 1,
 				'block_area_list': ( '{0}x{0}'.format(i*20) for i in range(1, 11) ),
 				'bg_color': 'black',
@@ -358,7 +406,7 @@ class App(Gtk.Application):
 				'tg_auto': False,
 				'tg_run': False,
 				'speed': 8,
-				'speed_adj': { 'value':1, 'lower':1, 'upper':20,
+				'speed_adj': { 'value':1, 'lower':1, 'upper':99,
 					'step_increment':1, 'page_increment':10, 'page_size':0 },
 				'image_icon': './data/icon/snake.svg',
 				'image_arrow': './data/pix/arrow.svg',
@@ -366,14 +414,16 @@ class App(Gtk.Application):
 				'image_snake_food': './data/pix/bonus5.svg',
 				}
 
-		self.map_rotation = {
-				'up': PixbufRotation.NONE,
-				'down': PixbufRotation.UPSIDEDOWN,
-				'left': PixbufRotation.COUNTERCLOCKWISE,
-				'right': PixbufRotation.CLOCKWISE,
+		# 注意绘图座标系正负与窗口上下左右的区别
+		self.map_arrow = {
+				'up': (PixbufRotation.NONE, Vector(0, -1)),
+				'down': (PixbufRotation.UPSIDEDOWN, Vector(0, 1)),
+				'left': (PixbufRotation.COUNTERCLOCKWISE, Vector(-1, 0)),
+				'right': (PixbufRotation.CLOCKWISE, Vector(1, 0))
 				}
 
 		self.snake = Snake(self.data['block_area']['width'], self.data['block_area']['height'])
+		self.timeout_id = None
 
 	def get_block_area_text(self):
 		area = self.data['block_area']
@@ -407,8 +457,9 @@ class App(Gtk.Application):
 			return '<big><b>{}</b></big>/<small>{}</small>'.format(lstr, rstr)
 
 	def req_draw_size_mini(self):
-		block_size = self.data['block_size']
-		block_area = self.data['block_area']
+		blk_sz = self.data['block_size']
+		area_w = self.data['block_area']['width']
+		area_h = self.data['block_area']['height']
 		margin = self.data['block_area_margin']
 
 		# get current monitor resolution
@@ -417,30 +468,27 @@ class App(Gtk.Application):
 		rect = Gdk.Monitor.get_geometry(monitor)
 
 		area_lim = (int(rect.width * 0.9), int(rect.height * 0.9))
-		area = [ block_size * block_area['width'] + margin,
-				block_size * block_area['height'] + margin ]
+		area = [ blk_sz * area_w + 2 * margin, blk_sz * area_h + 2 * margin ]
 
+		scale_x, scale_y = (1, 1)
 		if area[0] > area_lim[0]:
 			scale_x = area_lim[0]/area[0]
-		else:
-			scale_x = 1
 
 		if area[1] > area_lim[1]:
 			scale_y = area_lim[1]/area[1]
-		else:
-			scale_y = 1
 
 		# use the smaller scale
 		scale = scale_x if scale_x < scale_y else scale_y
 		self.data['block_area_scale'] = scale
 
-		# snake resize
-		self.snake.area_resize(block_area['width'], block_area['height'])
+		# snake resize && reset
+		self.snake.area_resize(area_w, area_h, True)
+		self.snake.snake_reset()
 
 		# request for mini size
 		self.draw.set_size_request(area[0] * scale, area[1] * scale)
 
-		# queue draw
+		# make sure redraw queued
 		self.draw.queue_draw()
 
 	def sync_color(self, *widgets):
@@ -468,6 +516,7 @@ class App(Gtk.Application):
 		self.draw = self.builder.get_object('DRAW')
 		self.tg_auto = self.builder.get_object('TG_AUTO')
 		self.tg_run = self.builder.get_object('TG_RUN')
+		self.lb_length = self.builder.get_object('LB_LENGTH')
 		self.bt_speed = self.builder.get_object('BT_SPEED')
 		self.color_fg = self.builder.get_object('COLOR_FG')
 		self.color_bg = self.builder.get_object('COLOR_BG')
@@ -475,12 +524,14 @@ class App(Gtk.Application):
 		self.img_logo = self.builder.get_object('IMG_SNAKE')
 
 	def load_image(self):
+		sz_food = self.data['block_size'] * 1.2
+
 		self.pix_icon = Pixbuf.new_from_file(self.data['image_icon'])
-		self.pix_food = Pixbuf.new_from_file(self.data['image_snake_food'])
+		self.pix_food = Pixbuf.new_from_file_at_size(self.data['image_snake_food'], sz_food, sz_food)
 		self.pix_arrow = Pixbuf.new_from_file_at_size(self.data['image_arrow'], 28, 28)
 		self.pix_arrow_key = Pixbuf.new_from_file_at_size(self.data['image_arrow_key'], 28, 28)
 
-		self.img_logo.set_from_pixbuf(self.pix_icon.scale_simple(20, 20, InterpType.BILINEAR))
+		self.img_logo.set_from_pixbuf(self.pix_icon.scale_simple(24, 24, InterpType.BILINEAR))
 
 	def init_ui(self):
 		self.load_widgets()		# load widgets
@@ -526,7 +577,7 @@ class App(Gtk.Application):
 		self.arrows = {}
 		for x in [ 'up', 'down', 'left', 'right' ]:
 			self.arrows[x] = self.builder.get_object('IMG_{}'.format(x.upper()))
-			self.arrows[x].set_from_pixbuf(self.pix_arrow.rotate_simple(self.map_rotation[x]))
+			self.arrows[x].set_from_pixbuf(self.pix_arrow.rotate_simple(self.map_arrow[x][0]))
 
 		# area: combo box
 		area_size_store = Gtk.ListStore(str)
@@ -544,9 +595,24 @@ class App(Gtk.Application):
 		# request for draw area size on init
 		self.req_draw_size_mini()
 
-		# remove focus on init, show
-		self.window.set_focus(None)
 		self.window.show_all()
+		# remove focus on init, must after show
+		self.window.set_focus(None)
+
+	def timer_move(self, data):
+		if self.data['tg_auto']:
+			snake_move = self.snake.auto_move
+		else:
+			snake_move = self.snake.move
+
+		if snake_move():
+			# set timer for next move
+			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
+			self.lb_length.set_text('{}'.format(self.snake.length))
+		else:
+			print('game over, died')
+
+		self.draw.queue_draw()
 
 	def draw_init(self, cr):
 		width = self.draw.get_allocated_width()
@@ -560,7 +626,7 @@ class App(Gtk.Application):
 
 		# draw background
 		rgba = Gdk.RGBA()
-		rgba.parse(app.data['bg_color'])
+		rgba.parse(self.data['bg_color'])
 		cr.set_source_rgba(*rgba)
 		cr.rectangle(0,0, width, height)
 		cr.fill()
@@ -581,22 +647,72 @@ class App(Gtk.Application):
 
 		rgba.parse('blue')
 		cr.set_source_rgba(*rgba)
-		cr.set_line_width(self.data['block_size']/5)
+		cr.set_line_width(self.data['block_size']/10)
 		cr.set_line_join(cairo.LINE_JOIN_ROUND)
 		cr.set_tolerance(0.1)
 		cr.stroke()
 
+	def rect_round(self, cr, x, y, lx, ly, r):
+		cr.move_to(x, y+r)
+		cr.arc(x + r, y + r, r, math.pi, -math.pi/2)
+		cr.rel_line_to(lx - 2*r, 0)
+		cr.arc(x + lx - r, y + r, r, -math.pi/2, 0)
+		cr.rel_line_to(0, ly - 2*r)
+		cr.arc(x + lx - r, y + ly - r, r, 0, math.pi/2)
+		cr.rel_line_to(-lx + 2*r, 0)
+		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
+		cr.close_path()
+
 	def draw_snake(self, cr):
-		rgba = Gdk.RGBA()
-		rgba.parse(app.data['fg_color'])
-		cr.set_source_rgba(*rgba)
-		cr.rectangle(60, 40, 10, 60)
+		l = self.data['block_size']
+
+		# draw food
+		pix_sz = Vector(self.pix_food.get_width(), self.pix_food.get_height())
+		pos = self.snake.food * l + Vector(l, l)/2 - pix_sz/2
+		Gdk.cairo_set_source_pixbuf(cr, self.pix_food, pos.x, pos.y)
+		cr.rectangle(pos.x, pos.y, pix_sz.x, pix_sz.y)
 		cr.fill()
 
-		rgba.parse(app.data['fg_color'])
-		cr.set_source_rgba(*rgba)
-		cr.rectangle(80, 70, 10, 60)
-		cr.fill()
+		# draw snake
+		# todo: auto color
+		rgba = Gdk.RGBA()
+		rgba.parse('black')
+		cstr_00 = rgba.to_string()
+		rgba.parse(self.data['bg_color'])
+		cstr_bg = rgba.to_string()
+		rgba.parse(self.data['fg_color'])
+		cstr_fg = rgba.to_string()
+
+		colorful = (cstr_fg == cstr_bg == cstr_00)
+
+		if not colorful:
+			cr.set_source_rgba(*rgba)
+
+		s = 0.9
+		ls, r = (s * l, 0.2 * l)
+		pos_offset = (1-s)/2 * l * Vector(1,1)
+
+		def color_pool(n):
+			for i in range(0, n):
+				yield '#{:0>6}'.format(hex(int(i/n * 0xeeeeee))[2:])
+
+		color = color_pool(self.snake.length)
+
+		for block in self.snake.body:
+			# aligned to grid center
+			pos = block * l + pos_offset
+			self.rect_round(cr, pos.x, pos.y, ls, ls, r)
+			if colorful:
+				rgba.parse(color.__next__())
+				cr.set_source_rgba(*rgba)
+			cr.fill()
+
+		if self.snake.is_died():
+			rgba.parse('red')
+			cr.set_source_rgba(*rgba)
+			pos = self.snake.head * l + pos_offset
+			self.rect_round(cr, pos.x, pos.y, ls, ls, r)
+			cr.fill()
 
 	def do_startup(self):
 		Gtk.Application.do_startup(self)
