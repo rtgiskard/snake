@@ -361,6 +361,12 @@ class Handler:
 
 		# now handel all keyboard event here, without pass on
 
+		if KEY_PRESS and keyname == 'h':
+			app.panel.set_visible(not app.panel.get_visible())
+
+		if app.snake.is_died():
+			return True
+
 		if keyname in [ 'up', 'down', 'left', 'right' ]:
 			if KEY_PRESS:
 				pixbuf = app.pix_arrow_key
@@ -502,16 +508,18 @@ class App(Gtk.Application):
 		for widget in widgets:
 			if widget is self.color_fg:
 				rgba.parse(self.data['fg_color'])
-				widget.set_rgba(rgba)
 			elif widget is self.color_bg:
 				rgba.parse(self.data['bg_color'])
-				widget.set_rgba(rgba)
+
+			widget.set_rgba(rgba)
 
 	def load_widgets(self):
 		self.builder = Gtk.Builder()
 		self.builder.add_from_file('snake.ui')
 
 		self.window = self.builder.get_object('Snake')
+		self.panel = self.builder.get_object('PANEL')
+
 		self.draw = self.builder.get_object('DRAW')
 		self.tg_auto = self.builder.get_object('TG_AUTO')
 		self.tg_run = self.builder.get_object('TG_RUN')
@@ -593,6 +601,11 @@ class App(Gtk.Application):
 
 		# request for draw area size on init
 		self.req_draw_size_mini()
+
+		# to avoid highlight in the entry
+		#self.bt_speed.grab_focus_without_selecting()
+		# or just avoid focus on those with entry
+		self.tg_run.grab_focus()
 
 		self.window.show_all()
 		# remove focus on init, must after show
