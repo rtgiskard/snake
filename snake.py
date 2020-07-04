@@ -176,6 +176,7 @@ class Snake:
 		return True
 
 	def move(self, aim=None):
+		""" move after died may revive the snake """
 		if aim: # set new direction
 			self.aim = aim
 		else:	# keep moving
@@ -194,9 +195,6 @@ class Snake:
 			self.body.pop()
 
 		return True
-
-	def auto_move(self):
-		return self.move( self.get_next_aim() )
 
 	def new_food(self):
 		if self.is_full():
@@ -218,7 +216,6 @@ class Snake:
 	def get_fast_aim(self, direct=True):
 		pd_cross = self.aim.pd_cross(self.vec_head2food)
 		pd_dot = self.aim.pd_dot(self.vec_head2food)
-
 
 		if direct:
 			""" 斜线 """
@@ -369,7 +366,8 @@ class Handler:
 				pixbuf = app.pix_arrow_key
 				# 非反向即可转向
 				if app.snake.aim != -app.map_arrow[keyname][1]:
-					app.snake.aim = app.map_arrow[keyname][1]
+					# save aim to buffer, apply only before the move
+					app.snake_aim_buf = app.map_arrow[keyname][1]
 			elif KEY_RELEASE:
 				pixbuf = app.pix_arrow
 
@@ -414,7 +412,7 @@ class App(Gtk.Application):
 				'image_snake_food': './data/pix/bonus5.svg',
 				}
 
-		# 注意绘图座标系正负与窗口上下左右的区别
+		# 注意绘图座标系正负与窗口上下左右的关系
 		self.map_arrow = {
 				'up': (PixbufRotation.NONE, Vector(0, -1)),
 				'down': (PixbufRotation.UPSIDEDOWN, Vector(0, 1)),
@@ -423,6 +421,7 @@ class App(Gtk.Application):
 				}
 
 		self.snake = Snake(self.data['block_area']['width'], self.data['block_area']['height'])
+		self.snake_aim_buf = None
 		self.timeout_id = None
 
 	def get_block_area_text(self):
@@ -600,16 +599,18 @@ class App(Gtk.Application):
 		self.window.set_focus(None)
 
 	def timer_move(self, data):
-		if self.data['tg_auto']:
-			snake_move = self.snake.auto_move
+		if not self.snake_aim_buf and self.data['tg_auto']:
+			aim = self.snake.get_next_aim()
 		else:
-			snake_move = self.snake.move
+			aim = self.snake_aim_buf
+			self.snake_aim_buf = None
 
-		if snake_move():
+		if self.snake.move(aim):
 			# set timer for next move
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
 			self.lb_length.set_text('{}'.format(self.snake.length))
 		else:
+			app.tg_run.set_sensitive(False)
 			print('game over, died')
 
 		self.draw.queue_draw()
