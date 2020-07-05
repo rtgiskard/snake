@@ -7,6 +7,7 @@ from functools import wraps
 
 import gi
 gi.require_version('Gtk', '3.0')
+
 from gi.repository import Gtk, Gdk, GLib
 from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 import cairo
@@ -116,10 +117,8 @@ class Snake:
 		self.area_w = width
 		self.area_h = height
 
-		# food && body
+		# food, body, aim
 		self.snake_reset()
-
-		self.aim = Vector(0,1)
 
 	@property
 	def length(self):
@@ -162,6 +161,7 @@ class Snake:
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
 		self.food = self.new_food()
+		self.aim = Vector(0,1)
 
 	def area_resize(self, width, height, reset=False):
 		if not reset:
@@ -185,14 +185,15 @@ class Snake:
 		# insert the new head
 		self.body.insert(0, self.head + aim)
 
-		if self.is_died():
-			return False
-
 		# if got food, generate new
 		if self.head == self.food:
 			self.food = self.new_food()
 		else:
 			self.body.pop()
+
+		# return after pop even died
+		if self.is_died():
+			return False
 
 		return True
 
@@ -285,8 +286,9 @@ class Handler:
 		elif widget is app.tg_run:
 			app.data['tg_run'] = active_state
 
-			# disactive combo when the snake is run
-			app.area_combo.set_sensitive(not active_state)
+			if active_state:
+				# disable combo once snake active
+				app.area_combo.set_sensitive(False)
 
 			if active_state:
 				app.timeout_id = GLib.timeout_add(1000/app.data['speed'], app.timer_move, None)
@@ -365,6 +367,9 @@ class Handler:
 			app.panel.set_visible(not app.panel.get_visible())
 
 		if app.snake.is_died():
+			if KEY_PRESS and keyname == 'r':
+				app.reset_on_gameover()
+
 			return True
 
 		if keyname in [ 'up', 'down', 'left', 'right' ]:
@@ -429,6 +434,26 @@ class App(Gtk.Application):
 		self.snake = Snake(self.data['block_area']['width'], self.data['block_area']['height'])
 		self.snake_aim_buf = None
 		self.timeout_id = None
+
+	def reset_on_gameover(self):
+		# reset snake and app
+		self.snake.snake_reset()
+		self.timeout_id = None
+		self.snake_aim_buf = None
+
+		# reset widgets
+		self.tg_run.set_active(False)
+		self.tg_auto.set_active(False)
+
+		# re-activate widgets
+		self.tg_run.set_sensitive(True)
+		self.area_combo.set_sensitive(True)
+
+		# reset length label
+		self.lb_length.set_text('{}'.format(self.snake.length))
+
+		# redraw
+		self.draw.queue_draw()
 
 	def get_block_area_text(self):
 		area = self.data['block_area']
@@ -623,7 +648,7 @@ class App(Gtk.Application):
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
 			self.lb_length.set_text('{}'.format(self.snake.length))
 		else:
-			app.tg_run.set_sensitive(False)
+			self.tg_run.set_sensitive(False)
 			print('game over, died')
 
 		self.draw.queue_draw()
@@ -677,6 +702,29 @@ class App(Gtk.Application):
 		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
 		cr.close_path()
 
+	def draw_text(self, cr):
+		# relative to the snake window, attention to the transform before
+		area_w = self.data['block_size'] * self.data['block_area']['width']
+		area_h = self.data['block_size'] * self.data['block_area']['height']
+
+		text_go = 'GAME OVER'
+		text_reset = 'Press "r" to reset'
+
+		cr.set_source_rgba(1, 0, 1, 0.8)
+		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+
+		cr.set_font_size(48)
+		extent_go = cr.text_extents(text_go)
+
+		cr.move_to((area_w - extent_go.width)/2, (area_h - extent_go.height)/2)
+		cr.show_text(text_go)
+
+		cr.set_font_size(20)
+		extent_reset = cr.text_extents(text_reset)
+
+		cr.move_to((area_w - extent_reset.width)/2, (area_h - extent_reset.height + extent_go.height)/2)
+		cr.show_text(text_reset)
+
 	def draw_snake(self, cr):
 		l = self.data['block_size']
 
@@ -708,7 +756,8 @@ class App(Gtk.Application):
 
 		def color_pool(n):
 			for i in range(0, n):
-				yield '#{:0>6}'.format(hex(int(i/n * 0xeeeeee))[2:])
+				# set an offset so that blocks are not black
+				yield '#{:0>6}'.format(hex(int(i/n * 0xeeeeee+0x101010))[2:])
 
 		color = color_pool(self.snake.length)
 
@@ -727,6 +776,8 @@ class App(Gtk.Application):
 			pos = self.snake.head * l + pos_offset
 			self.rect_round(cr, pos.x, pos.y, ls, ls, r)
 			cr.fill()
+
+			self.draw_text(cr)
 
 	def do_startup(self):
 		Gtk.Application.do_startup(self)
