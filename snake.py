@@ -2,8 +2,9 @@
 # coding: utf8
 
 import sys
-import random, math
+import time, random, math
 from functools import wraps
+import numpy as np
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -31,6 +32,17 @@ def echo_func_count(func):
 		return func(*args, **kwargs)
 
 	return wrapper
+
+def count_func_time(func):
+	@wraps(func)
+	def wrapper(*args, **kwargs):
+		ts=time.process_time_ns()
+		orig_return = func(*args, **kwargs)
+		print("T({}): {}us".format(func.__name__, (time.process_time_ns() - ts)/1000))
+		return orig_return
+
+	return wrapper
+
 
 class TransMatrix:
 	# matrix: [col1, col2]
@@ -112,6 +124,7 @@ class Vector(Dot):
 		else:
 			return Vector(new_x, new_y)
 
+
 class Snake:
 	def __init__(self, width=40, height=40):
 		self.area_w = width
@@ -160,8 +173,10 @@ class Snake:
 
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
-		self.food = self.new_food()
 		self.aim = Vector(0,1)
+
+		self.food = self.new_food()
+		self.graph = None
 
 	def area_resize(self, width, height, reset=False):
 		if not reset:
@@ -185,9 +200,10 @@ class Snake:
 		# insert the new head
 		self.body.insert(0, self.head + aim)
 
-		# if got food, generate new
+		# if got food, generate new, then reset graph
 		if self.head == self.food:
 			self.food = self.new_food()
+			self.graph = None
 		else:
 			self.body.pop()
 
@@ -214,11 +230,11 @@ class Snake:
 			else:
 				space_id -= 1
 
-	def get_fast_aim(self, direct=True):
+	def get_aim_greedy(self, md_diag=True):
 		pd_cross = self.aim.pd_cross(self.vec_head2food)
 		pd_dot = self.aim.pd_dot(self.vec_head2food)
 
-		if direct:
+		if md_diag:
 			""" 斜线 """
 			if pd_cross > 0:
 				matrix = TransMatrix.ROTATE_LEFT
@@ -243,12 +259,56 @@ class Snake:
 
 		return self.aim.trans_linear(matrix, inplace=False)
 
-	def get_next_aim(self):
-		aim_fast = self.get_fast_aim()
+	def get_aim_from_graph(self, dest):
+		"""search the graph for a path from current head to dest
+
+			return aim for next move
+		"""
+
+		# now graph is there, try to search: DFS, BFS
+		aim_seq = self.graph_search_dfs(self.graph, self.head, dest)
+		#aim_seq = self.graph_search_bfs(self.graph, self.head, dest)
+
+		for aim in aim_seq:
+			yield aim
+
+		# graph = self.graph
+		# vect = Vector(0, 1)
+		# elem = self.head
+		# # with snake move, head moves (graph not update)
+		# while graph[elem.x, elem.y] > graph[self.head.x, self.head.y] + 1:
+		# 	for nb in [ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]:
+		# 		if self.is_inside(nb) and graph[nb.x, nb.y] > 0 \
+		# 				and graph[nb.x, nb.y] < graph[elem.x, elem.y]:
+		# 			elem = nb
+		# 			break
+
+
+	def graph_search_dfs(self, graph, start, end):
+		if graph(end.x, end.y) == 0:
+			return list()
+
+	def graph_search_bfs(self, graph, start, end):
+		pass
+
+	def get_next_aim(self, mode, md_sub=True):
+		"""return None if no valid aim, which means died and just keep aim"""
+
 		aim_choices = [self.aim, self.aim.T, -self.aim.T]
 
-		# aim_fast is already in aim_choices
-		aim_choices.remove(aim_fast)
+		if mode == 0:		# graph
+			if self.graph is None:
+				self.graph = self.graph_scan(md_sub)
+
+			aim_next = self.get_aim_from_graph(self.food)
+
+		elif mode == 1:		# greedy
+			aim_next = self.get_aim_greedy(md_sub)
+
+		else:				# random
+			aim_next = random.choice(aim_choices)
+
+		aim_choices.remove(aim_next)
 
 		# switch random
 		if random.randint(0,1):
@@ -256,13 +316,54 @@ class Snake:
 			aim_choices[0] = aim_choices[1]
 			aim_choices[1] = aim_t
 
-		aim_choices.insert(0, aim_fast)
+		aim_choices.insert(0, aim_next)
 
+		# in case, fallback
 		for aim in aim_choices:
 			if self.is_aim_right(aim):
 				return aim
 
 		return None
+
+	#@count_func_time
+	def graph_scan(self, md_fast=True):
+		vect = Vector(0, 1)
+
+		# in np, it's (row, col), it's saved/read in transposed style
+		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+		pipe = [self.head]
+
+		while len(pipe) > 0:
+			elem = pipe.pop(0)
+
+			"""with md_fast False, it's possible to reach food not currently connected"""
+			if md_fast and elem == self.food:
+				break
+
+			# distance from head to the elem
+			dist_elem = graph[elem.x, elem.y]
+
+			# neighbors of head
+			neighbors = [ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]
+
+			if dist_elem == 0:
+				# the head, can not go backward directly
+				neighbors.remove(self.head - self.aim)
+				body_check = self.body
+			else:
+				# the tail have moved forward
+				body_check = self.body[:-dist_elem]
+
+			for nb in neighbors:
+				if self.is_inside(nb) and nb not in body_check:
+					if graph[nb.x, nb.y] == 0 or graph[nb.x, nb.y] > dist_elem+1:
+						# for dist_nb > 0, this will reverse update the filled path
+						graph[nb.x, nb.y] = dist_elem + 1
+						# add to pipe
+						pipe.append(nb)
+
+		return graph
+
 
 class Handler:
 	@classmethod
@@ -346,7 +447,8 @@ class Handler:
 
 	@classmethod
 	def on_keyboard_event(cls, widget, event, app):
-		keyname = Gdk.keyval_name(event.keyval).lower()
+		KeyName = Gdk.keyval_name(event.keyval)
+		keyname = KeyName.lower()
 
 		KEY_PRESS = (event.type == Gdk.EventType.KEY_PRESS)
 		KEY_RELEASE = (event.type == Gdk.EventType.KEY_RELEASE)
@@ -365,6 +467,26 @@ class Handler:
 
 		if KEY_PRESS and keyname == 'h':
 			app.panel.set_visible(not app.panel.get_visible())
+
+		elif KEY_PRESS and keyname == 'g':
+			if KeyName == 'G':
+				app.snake.graph = app.snake.graph_scan(app.debug['sub_mode'])
+				app.debug['show_graph'] = True
+			else:
+				app.debug['show_graph'] = not app.debug['show_graph']
+
+			app.draw.queue_draw()
+
+		elif KEY_PRESS and keyname == 's':
+			if KeyName == 'S':
+				app.debug['sub_mode'] = True
+			else:
+				app.debug['sub_mode'] = False
+
+		elif KEY_PRESS and keyname == 'm':
+			app.debug['auto_mode'] += 1
+			app.debug['auto_mode'] %= 3
+			print('auto_mode: {}'.format(app.auto_modes[app.debug['auto_mode']]))
 
 		if app.snake.is_died():
 			if KEY_PRESS and keyname == 'r':
@@ -422,6 +544,14 @@ class App(Gtk.Application):
 				'image_arrow_key': './data/pix/arrow-key.svg',
 				'image_snake_food': './data/pix/bonus5.svg',
 				}
+
+		self.debug = {
+				'auto_mode': 0,
+				'sub_mode': True,
+				'show_graph': False,
+				}
+
+		self.auto_modes = ['graph', 'greedy', 'random']
 
 		# 注意绘图座标系正负与窗口上下左右的关系
 		self.map_arrow = {
@@ -636,14 +766,20 @@ class App(Gtk.Application):
 		# remove focus on init, must after show
 		self.window.set_focus(None)
 
+	#@count_func_time
 	def timer_move(self, data):
-		if not self.snake_aim_buf and self.data['tg_auto']:
-			aim = self.snake.get_next_aim()
+		if self.data['tg_auto'] and not self.snake_aim_buf:
+			aim = self.snake.get_next_aim(self.debug['auto_mode'], self.debug['sub_mode'])
 		else:
 			aim = self.snake_aim_buf
 			self.snake_aim_buf = None
 
 		if self.snake.move(aim):
+			# after move, if graph invalid, update for graph auto mode
+			if self.snake.graph is None and self.data['tg_auto'] \
+					and self.debug['auto_mode'] == 0:
+				self.snake.graph = self.snake.graph_scan(self.debug['sub_mode'])
+
 			# set timer for next move
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
 			self.lb_length.set_text('{}'.format(self.snake.length))
@@ -652,6 +788,57 @@ class App(Gtk.Application):
 			print('game over, died')
 
 		self.draw.queue_draw()
+
+	def rect_round(self, cr, x, y, lx, ly, r):
+		cr.move_to(x, y+r)
+		cr.arc(x + r, y + r, r, math.pi, -math.pi/2)
+		cr.rel_line_to(lx - 2*r, 0)
+		cr.arc(x + lx - r, y + r, r, -math.pi/2, 0)
+		cr.rel_line_to(0, ly - 2*r)
+		cr.arc(x + lx - r, y + ly - r, r, 0, math.pi/2)
+		cr.rel_line_to(-lx + 2*r, 0)
+		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
+		cr.close_path()
+
+	def draw_gameover(self, cr):
+		# relative to the snake window, attention to the transform before
+		area_w = self.data['block_size'] * self.data['block_area']['width']
+		area_h = self.data['block_size'] * self.data['block_area']['height']
+
+		text_go = 'GAME OVER'
+		text_reset = 'Press "r" to reset'
+
+		cr.set_source_rgba(1, 0, 1, 0.8)
+		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+
+		cr.set_font_size(48)
+		extent_go = cr.text_extents(text_go)
+
+		# litte above center
+		cr.move_to((area_w - extent_go.width)/2, (area_h - extent_go.height)/2)
+		cr.show_text(text_go)
+
+		cr.set_font_size(20)
+		extent_reset = cr.text_extents(text_reset)
+
+		cr.move_to((area_w - extent_reset.width)/2, (area_h - extent_reset.height + extent_go.height)/2)
+		cr.show_text(text_reset)
+
+	def draw_snake_graph(self, cr):
+		if self.snake.graph is None:
+			return False
+
+		l = self.data['block_size']
+
+		cr.set_source_rgba(0, 1, 0, 0.8)
+		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+		cr.set_font_size(l*0.7)
+
+		for x,y in np.transpose(self.snake.graph.nonzero()):
+			dist = self.snake.graph[x, y]
+			extent = cr.text_extents(str(dist))
+			cr.move_to((x+1/2)*l - extent.width/2, (y+1/2)*l + extent.height/2)
+			cr.show_text(str(dist))
 
 	def draw_init(self, cr):
 		width = self.draw.get_allocated_width()
@@ -691,40 +878,6 @@ class App(Gtk.Application):
 		cr.set_tolerance(0.1)
 		cr.stroke()
 
-	def rect_round(self, cr, x, y, lx, ly, r):
-		cr.move_to(x, y+r)
-		cr.arc(x + r, y + r, r, math.pi, -math.pi/2)
-		cr.rel_line_to(lx - 2*r, 0)
-		cr.arc(x + lx - r, y + r, r, -math.pi/2, 0)
-		cr.rel_line_to(0, ly - 2*r)
-		cr.arc(x + lx - r, y + ly - r, r, 0, math.pi/2)
-		cr.rel_line_to(-lx + 2*r, 0)
-		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
-		cr.close_path()
-
-	def draw_text(self, cr):
-		# relative to the snake window, attention to the transform before
-		area_w = self.data['block_size'] * self.data['block_area']['width']
-		area_h = self.data['block_size'] * self.data['block_area']['height']
-
-		text_go = 'GAME OVER'
-		text_reset = 'Press "r" to reset'
-
-		cr.set_source_rgba(1, 0, 1, 0.8)
-		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-
-		cr.set_font_size(48)
-		extent_go = cr.text_extents(text_go)
-
-		cr.move_to((area_w - extent_go.width)/2, (area_h - extent_go.height)/2)
-		cr.show_text(text_go)
-
-		cr.set_font_size(20)
-		extent_reset = cr.text_extents(text_reset)
-
-		cr.move_to((area_w - extent_reset.width)/2, (area_h - extent_reset.height + extent_go.height)/2)
-		cr.show_text(text_reset)
-
 	def draw_snake(self, cr):
 		l = self.data['block_size']
 
@@ -750,16 +903,17 @@ class App(Gtk.Application):
 		if not colorful:
 			cr.set_source_rgba(*rgba)
 
-		s = 0.9
-		ls, r = (s * l, 0.2 * l)
-		pos_offset = (1-s)/2 * l * Vector(1,1)
-
 		def color_pool(n):
 			for i in range(0, n):
 				# set an offset so that blocks are not black
-				yield '#{:0>6}'.format(hex(int(i/n * 0xeeeeee+0x101010))[2:])
+				yield '#{:0>6}'.format(hex(int(i/n * 0xefffff+0x100000))[2:])
 
 		color = color_pool(self.snake.length)
+
+		# scale the body block and center it in the grid
+		s = 0.9
+		ls, r = (s * l, 0.2 * l)
+		pos_offset = (1-s)*l/2 * Vector(1,1)
 
 		for block in self.snake.body:
 			# aligned to grid center
@@ -777,7 +931,10 @@ class App(Gtk.Application):
 			self.rect_round(cr, pos.x, pos.y, ls, ls, r)
 			cr.fill()
 
-			self.draw_text(cr)
+			self.draw_gameover(cr)
+
+		if self.debug['show_graph']:
+			self.draw_snake_graph(cr)
 
 	def do_startup(self):
 		Gtk.Application.do_startup(self)
@@ -787,6 +944,7 @@ class App(Gtk.Application):
 			self.init_ui()
 		else:
 			self.window.present()
+
 
 if __name__ == '__main__':
 	random.seed()
