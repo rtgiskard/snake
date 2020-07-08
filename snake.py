@@ -9,9 +9,16 @@ import numpy as np
 import gi
 gi.require_version('Gtk', '3.0')
 
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gio, Gtk, Gdk, GLib
 from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 import cairo
+
+"""
+todo:
+. 封闭区间最大长度(重扫描时间点长度二分)
+. 如到达食物后，围成空间不足长度，则游荡会再查看
+. 路径避免不必要转弯？
+"""
 
 
 def echo_func(func):
@@ -44,6 +51,11 @@ def count_func_time(func):
 	return wrapper
 
 
+def random_seq(pool):
+	for _i_ in range(0, len(pool)):
+		idx = random.randint(0, len(pool)-1)
+		yield pool.pop(idx)
+
 class TransMatrix:
 	# matrix: [col1, col2]
 	ROTATE_LEFT = [[0, 1], [-1, 0]]
@@ -56,6 +68,9 @@ class Dot:
 
 	def __repr__(self):
 		return '({}, {})'.format(self.x, self.y)
+
+	def __iter__(self):
+		return iter((self.x, self.y))
 
 class Vector(Dot):
 	def __init__(self, x=0, y=0):
@@ -177,6 +192,7 @@ class Snake:
 
 		self.food = self.new_food()
 		self.graph = None
+		self.graph_path = None
 
 	def area_resize(self, width, height, reset=False):
 		if not reset:
@@ -204,6 +220,7 @@ class Snake:
 		if self.head == self.food:
 			self.food = self.new_food()
 			self.graph = None
+			self.graph_path = None
 		else:
 			self.body.pop()
 
@@ -229,6 +246,154 @@ class Snake:
 				return vec_seq
 			else:
 				space_id -= 1
+
+	@count_func_time
+	def graph_scan(self, md_fast=True):
+		vect = Vector(0, 1)
+
+		# in np, it's (row, col), it's saved/read in transposed style
+		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+		pipe = [self.head]
+
+		while len(pipe) > 0:
+			elem = pipe.pop(0)
+
+			"""with md_fast False, it's possible to reach food not currently connected"""
+			if md_fast and elem == self.food:
+				break
+
+			# distance from head to the elem
+			dist_elem = graph[elem.x, elem.y]
+
+			# neighbors of head
+			neighbors = [ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]
+
+			if dist_elem == 0:
+				# the head, can not go backward directly
+				neighbors.remove(self.head - self.aim)
+				body_check = self.body[1:]
+			else:
+				# the tail have moved forward
+				body_check = self.body[:-dist_elem]
+
+			for nb in random_seq(neighbors):
+				if self.is_inside(nb) and nb not in body_check:
+					if graph[nb.x, nb.y] == 0:
+						"""
+						with condition `raph[nb.x, nb.y] > dist_elem+1`,
+						this will reverse update the filled path which will
+						make the graph accurate to reflect the distance,
+						but useless for path search
+						"""
+						graph[nb.x, nb.y] = dist_elem + 1
+						# add to pipe
+						pipe.append(nb)
+
+		self.graph = graph
+
+	@count_func_time
+	def graph_path_scan(self, dest, md_dfs=True):
+		if self.graph[dest.x, dest.y] == 0:
+			path = []
+		else:
+			"""
+			attention for start:
+				if it's snake's head, the original graph[head] is likely to be
+				the length+1, which is decided by the graph scan logic, this
+				may be useful for survive mode, but do no help to reach food,
+				and cause trouble for path search, just override here
+			"""
+			self.graph[self.head.x, self.head.y] = 0
+
+			if md_dfs:
+				path = self.graph_path_dfs_rev(self.graph, self.head, dest)
+			else:
+				path = self.graph_path_bfs(self.graph, self.head, dest)
+
+			# simplify path
+			for i in range(len(path)):
+				path[i] = path[i][0]
+
+		self.graph_path = path
+
+	# todo: dfs/bfs: stack/pipe method
+	def graph_path_dfs(self, graph, start, end):
+		vect = Vector(0, 1)
+
+		# the stack
+		path = [[start]]
+
+		while len(path) > 0:
+			elem = path[-1][0]
+
+			if elem == end:
+				break
+
+			nbs = []
+			for nb in random_seq([ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]):
+				# if can move forward to the neighbor, add to nbs
+				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]+1:
+					nbs.append(nb)
+
+			if len(nbs) > 0 and graph[elem.x, elem.y] < graph[end.x, end.y]:
+				path.append(nbs)
+			else:			# the path is died or beyond end
+				# revert to last branch
+				while len(path) > 0 and len(path[-1]) == 1:
+					path.pop()
+
+				# remove current choice from the branch
+				if len(path) > 0:
+					path[-1].pop(0)
+
+		return path
+
+	def graph_path_dfs_rev(self, graph, start, end):
+		"""反向深度搜索，尽量利用图中已有信息，提高效率"""
+		vect = Vector(0, 1)
+
+		# the stack
+		path = [[end]]
+
+		while len(path) > 0:
+			elem = path[0][0]
+
+			if elem == start:
+				break
+
+			nbs = []
+			for nb in random_seq([ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]):
+				# if can move forward to the neighbor, add to nbs
+				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]-1:
+					nbs.append(nb)
+
+			if len(nbs) > 0:
+				path.insert(0, nbs)
+			else:
+				while len(path) > 0 and len(path[0]) == 1:
+					path.pop(0)
+
+				if len(path)>0:
+					path[0].pop(0)
+
+		return path
+
+	def graph_path_bfs(self, graph, start, end):
+		pass
+
+
+	def get_aim_graph(self):
+		""" just follow current graph path
+
+			return None if path not valid or head not in path
+		"""
+		try:
+			# find current head in path
+			next_id = self.graph_path.index(self.head) + 1
+		except:
+			return None
+
+		return self.graph_path[next_id] - self.head
 
 	def get_aim_greedy(self, md_diag=True):
 		pd_cross = self.aim.pd_cross(self.vec_head2food)
@@ -259,64 +424,28 @@ class Snake:
 
 		return self.aim.trans_linear(matrix, inplace=False)
 
-	def get_aim_from_graph(self, dest):
-		"""search the graph for a path from current head to dest
+	def get_next_aim(self, mode, md_sub=True):
+		"""
+		return None if no valid aim, which means died and just keep aim
 
-			return aim for next move
+		take care of the init operation for conrresponding auto mode
 		"""
 
-		# now graph is there, try to search: DFS, BFS
-		aim_seq = self.graph_search_dfs(self.graph, self.head, dest)
-		#aim_seq = self.graph_search_bfs(self.graph, self.head, dest)
-
-		for aim in aim_seq:
-			yield aim
-
-		# graph = self.graph
-		# vect = Vector(0, 1)
-		# elem = self.head
-		# # with snake move, head moves (graph not update)
-		# while graph[elem.x, elem.y] > graph[self.head.x, self.head.y] + 1:
-		# 	for nb in [ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]:
-		# 		if self.is_inside(nb) and graph[nb.x, nb.y] > 0 \
-		# 				and graph[nb.x, nb.y] < graph[elem.x, elem.y]:
-		# 			elem = nb
-		# 			break
-
-
-	def graph_search_dfs(self, graph, start, end):
-		if graph(end.x, end.y) == 0:
-			return list()
-
-	def graph_search_bfs(self, graph, start, end):
-		pass
-
-	def get_next_aim(self, mode, md_sub=True):
-		"""return None if no valid aim, which means died and just keep aim"""
-
-		aim_choices = [self.aim, self.aim.T, -self.aim.T]
-
 		if mode == 0:		# graph
-			if self.graph is None:
-				self.graph = self.graph_scan(md_sub)
-
-			aim_next = self.get_aim_from_graph(self.food)
+			aim_next = self.get_aim_graph()
 
 		elif mode == 1:		# greedy
 			aim_next = self.get_aim_greedy(md_sub)
 
 		else:				# random
-			aim_next = random.choice(aim_choices)
+			aim_next = None
 
-		aim_choices.remove(aim_next)
+		aim_choices = [ self.aim, self.aim.T, -self.aim.T ]
+		aim_choices = [ fb for fb in random_seq(aim_choices) ]
 
-		# switch random
-		if random.randint(0,1):
-			aim_t = aim_choices[0]
-			aim_choices[0] = aim_choices[1]
-			aim_choices[1] = aim_t
-
-		aim_choices.insert(0, aim_next)
+		if aim_next:
+			aim_choices.remove(aim_next)
+			aim_choices.insert(0, aim_next)
 
 		# in case, fallback
 		for aim in aim_choices:
@@ -324,45 +453,6 @@ class Snake:
 				return aim
 
 		return None
-
-	#@count_func_time
-	def graph_scan(self, md_fast=True):
-		vect = Vector(0, 1)
-
-		# in np, it's (row, col), it's saved/read in transposed style
-		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
-		pipe = [self.head]
-
-		while len(pipe) > 0:
-			elem = pipe.pop(0)
-
-			"""with md_fast False, it's possible to reach food not currently connected"""
-			if md_fast and elem == self.food:
-				break
-
-			# distance from head to the elem
-			dist_elem = graph[elem.x, elem.y]
-
-			# neighbors of head
-			neighbors = [ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]
-
-			if dist_elem == 0:
-				# the head, can not go backward directly
-				neighbors.remove(self.head - self.aim)
-				body_check = self.body
-			else:
-				# the tail have moved forward
-				body_check = self.body[:-dist_elem]
-
-			for nb in neighbors:
-				if self.is_inside(nb) and nb not in body_check:
-					if graph[nb.x, nb.y] == 0 or graph[nb.x, nb.y] > dist_elem+1:
-						# for dist_nb > 0, this will reverse update the filled path
-						graph[nb.x, nb.y] = dist_elem + 1
-						# add to pipe
-						pipe.append(nb)
-
-		return graph
 
 
 class Handler:
@@ -470,7 +560,7 @@ class Handler:
 
 		elif KEY_PRESS and keyname == 'g':
 			if KeyName == 'G':
-				app.snake.graph = app.snake.graph_scan(app.debug['sub_mode'])
+				app.update_snake_graph()
 				app.debug['show_graph'] = True
 			else:
 				app.debug['show_graph'] = not app.debug['show_graph']
@@ -520,7 +610,9 @@ class Handler:
 
 class App(Gtk.Application):
 	def __init__(self, *args, **kwargs):
-		super().__init__(*args, application_id='rt.game.snake', **kwargs)
+		# allow multiple instance
+		super().__init__(*args, application_id='rt.game.snake',
+				flags=Gio.ApplicationFlags.NON_UNIQUE, **kwargs)
 
 		self.window = None
 
@@ -766,6 +858,28 @@ class App(Gtk.Application):
 		# remove focus on init, must after show
 		self.window.set_focus(None)
 
+	@count_func_time
+	def update_snake_graph(self):
+		self.snake.graph_scan(self.debug['sub_mode'])
+		self.snake.graph_path_scan(self.snake.food, md_dfs=True)
+
+	#@count_func_time
+	def check_update_after_move(self):
+		"""
+		what and when to update:
+		1. the graph
+			1.1 eat food
+			1.2 off-path:
+			1.3 force update
+		2. the graph path
+			2.1 after graph update
+		"""
+		# if in graph auto mode
+		if self.data['tg_auto'] and self.debug['auto_mode'] == 0:
+			# if eat food on move, or off-path
+			if self.snake.graph is None or self.snake.head not in self.snake.graph_path:
+				self.update_snake_graph()
+
 	#@count_func_time
 	def timer_move(self, data):
 		if self.data['tg_auto'] and not self.snake_aim_buf:
@@ -775,10 +889,7 @@ class App(Gtk.Application):
 			self.snake_aim_buf = None
 
 		if self.snake.move(aim):
-			# after move, if graph invalid, update for graph auto mode
-			if self.snake.graph is None and self.data['tg_auto'] \
-					and self.debug['auto_mode'] == 0:
-				self.snake.graph = self.snake.graph_scan(self.debug['sub_mode'])
+			self.check_update_after_move()
 
 			# set timer for next move
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
@@ -799,6 +910,13 @@ class App(Gtk.Application):
 		cr.rel_line_to(-lx + 2*r, 0)
 		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
 		cr.close_path()
+
+	def cross_mark(self, cr, x, y, lx, ly, r):
+		cr.move_to(x+r, y+r)
+		cr.line_to(x+lx-r, y+ly-r)
+		cr.move_to(x+lx-r, y+r)
+		cr.line_to(x+r, y+ly-r)
+		cr.stroke()
 
 	def draw_gameover(self, cr):
 		# relative to the snake window, attention to the transform before
@@ -824,21 +942,46 @@ class App(Gtk.Application):
 		cr.move_to((area_w - extent_reset.width)/2, (area_h - extent_reset.height + extent_go.height)/2)
 		cr.show_text(text_reset)
 
+	def draw_snake_graph_path(self, cr):
+		# graph path exist and not empty
+		if self.snake.graph_path is None or len(self.snake.graph_path) == 0:
+				return False
+
+		l = self.data['block_size']
+
+		cr.save()
+		cr.set_source_rgba(0, 1, 1, 0.5)
+		cr.set_line_width(0.2)
+
+		cr.transform(cairo.Matrix(l, 0, 0, l, l/2, l/2))
+
+		cr.move_to(*self.snake.graph_path[0])
+		for pos in self.snake.graph_path[1:]:
+			cr.line_to(*pos)
+
+		cr.stroke()
+		cr.restore()
+
 	def draw_snake_graph(self, cr):
 		if self.snake.graph is None:
 			return False
 
 		l = self.data['block_size']
 
+		cr.save()
 		cr.set_source_rgba(0, 1, 0, 0.8)
 		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-		cr.set_font_size(l*0.7)
+		cr.set_font_size(0.7)
+
+		cr.transform(cairo.Matrix(l, 0, 0, l, l/2, l/2))
 
 		for x,y in np.transpose(self.snake.graph.nonzero()):
 			dist = self.snake.graph[x, y]
 			extent = cr.text_extents(str(dist))
-			cr.move_to((x+1/2)*l - extent.width/2, (y+1/2)*l + extent.height/2)
+			cr.move_to(x - extent.width/2, y + extent.height/2)
 			cr.show_text(str(dist))
+
+		cr.restore()
 
 	def draw_init(self, cr):
 		width = self.draw.get_allocated_width()
@@ -883,9 +1026,10 @@ class App(Gtk.Application):
 
 		# draw food
 		pix_sz = Vector(self.pix_food.get_width(), self.pix_food.get_height())
-		pos = self.snake.food * l + Vector(l, l)/2 - pix_sz/2
-		Gdk.cairo_set_source_pixbuf(cr, self.pix_food, pos.x, pos.y)
-		cr.rectangle(pos.x, pos.y, pix_sz.x, pix_sz.y)
+		food = self.snake.food * l + Vector(l, l)/2 - pix_sz/2
+		Gdk.cairo_set_source_pixbuf(cr, self.pix_food, *food)
+
+		cr.rectangle(*food, *pix_sz)
 		cr.fill()
 
 		# draw snake
@@ -911,30 +1055,33 @@ class App(Gtk.Application):
 		color = color_pool(self.snake.length)
 
 		# scale the body block and center it in the grid
-		s = 0.9
-		ls, r = (s * l, 0.2 * l)
-		pos_offset = (1-s)*l/2 * Vector(1,1)
+		s, r = (0.9, 0.2)
+		xy_offset = (1-s)*l/2
+
+		cr.save()
+		# aligned to grid center
+		cr.transform(cairo.Matrix(l, 0, 0, l, xy_offset, xy_offset))
 
 		for block in self.snake.body:
-			# aligned to grid center
-			pos = block * l + pos_offset
-			self.rect_round(cr, pos.x, pos.y, ls, ls, r)
+			self.rect_round(cr, *block, s, s, r)
 			if colorful:
 				rgba.parse(color.__next__())
 				cr.set_source_rgba(*rgba)
 			cr.fill()
 
 		if self.snake.is_died():
-			rgba.parse('red')
-			cr.set_source_rgba(*rgba)
-			pos = self.snake.head * l + pos_offset
-			self.rect_round(cr, pos.x, pos.y, ls, ls, r)
-			cr.fill()
+			cr.set_source_rgba(1, 0, 0, 1)
+			cr.set_line_width(0.2)
+			self.cross_mark(cr, *self.snake.head, s, s, r)
 
+		cr.restore()
+
+		if self.snake.is_died():
 			self.draw_gameover(cr)
 
 		if self.debug['show_graph']:
 			self.draw_snake_graph(cr)
+			self.draw_snake_graph_path(cr)
 
 	def do_startup(self):
 		Gtk.Application.do_startup(self)
