@@ -20,6 +20,9 @@ todo:
 . 路径避免不必要转弯？
 """
 
+class DEBUG:
+	pause = False
+
 
 def echo_func(func):
 	@wraps(func)
@@ -41,11 +44,20 @@ def echo_func_count(func):
 	return wrapper
 
 def count_func_time(func):
+	ts_avg = [0, 0]
+
 	@wraps(func)
 	def wrapper(*args, **kwargs):
 		ts=time.process_time_ns()
+
 		orig_return = func(*args, **kwargs)
-		print("T({}): {}us".format(func.__name__, (time.process_time_ns() - ts)/1000))
+
+		ts_this = time.process_time_ns() - ts
+		ts_avg[0] += 1
+		ts_avg[1] = (ts_avg[1] * (ts_avg[0]-1) + ts_this)/ts_avg[0]
+		print("T({}) us: {:.2f}  {:.2f}:{}".format(func.__name__,
+			ts_this/1000, ts_avg[1]/1000, ts_avg[0]))
+
 		return orig_return
 
 	return wrapper
@@ -55,6 +67,15 @@ def random_seq(pool):
 	for _i_ in range(0, len(pool)):
 		idx = random.randint(0, len(pool)-1)
 		yield pool.pop(idx)
+
+def color_pool(n):
+	for i in range(0, n):
+		if   i/n < 1/6: yield '#00ff{:0>2}'.format(hex(int((6*i/n-0) * 0xff))[2:])
+		elif i/n < 2/6: yield '#00{:0>2}ff'.format(hex(int((2-6*i/n) * 0xff))[2:])
+		elif i/n < 3/6: yield '#{:0>2}00ff'.format(hex(int((6*i/n-2) * 0xff))[2:])
+		elif i/n < 4/6: yield '#ff00{:0>2}'.format(hex(int((4-6*i/n) * 0xff))[2:])
+		elif i/n < 5/6: yield '#ff{:0>2}00'.format(hex(int((6*i/n-4) * 0xff))[2:])
+		else:			yield '#{:0>2}ff00'.format(hex(int((6-6*i/n) * 0xff))[2:])
 
 class TransMatrix:
 	# matrix: [col1, col2]
@@ -139,7 +160,6 @@ class Vector(Dot):
 		else:
 			return Vector(new_x, new_y)
 
-
 class Snake:
 	def __init__(self, width=40, height=40):
 		self.area_w = width
@@ -184,7 +204,13 @@ class Snake:
 
 	def is_aim_right(self, aim):
 		# todo: more check
-		return self.is_aim_valid(aim)
+		if self.is_aim_valid(aim):
+			if self.graph is not None:
+				return self.graph_aim_deadend(self.graph, self.head, aim)
+			else:
+				return True
+
+		return False
 
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
@@ -247,7 +273,7 @@ class Snake:
 			else:
 				space_id -= 1
 
-	@count_func_time
+	#@count_func_time
 	def graph_scan(self, md_fast=True):
 		vect = Vector(0, 1)
 
@@ -291,10 +317,11 @@ class Snake:
 
 		self.graph = graph
 
-	@count_func_time
-	def graph_path_scan(self, dest, md_dfs=True):
+	#@count_func_time
+	def graph_path_scan(self, dest, md_rev=True):
 		if self.graph[dest.x, dest.y] == 0:
-			path = []
+			"""food not reacheable, begin survive mode"""
+			path = self.graph_path_survive(self.graph, self.head, dest)
 		else:
 			"""
 			attention for start:
@@ -305,18 +332,17 @@ class Snake:
 			"""
 			self.graph[self.head.x, self.head.y] = 0
 
-			if md_dfs:
-				path = self.graph_path_dfs_rev(self.graph, self.head, dest)
+			if md_rev:
+				path = self.graph_path_gen_rev(self.graph, self.head, dest)
 			else:
-				path = self.graph_path_bfs(self.graph, self.head, dest)
+				path = self.graph_path_dfs(self.graph, self.head, dest)
 
-			# simplify path
-			for i in range(len(path)):
-				path[i] = path[i][0]
+		# keep only current path
+		for i in range(len(path)):
+			path[i] = path[i][0]
 
 		self.graph_path = path
 
-	# todo: dfs/bfs: stack/pipe method
 	def graph_path_dfs(self, graph, start, end):
 		vect = Vector(0, 1)
 
@@ -348,8 +374,8 @@ class Snake:
 
 		return path
 
-	def graph_path_dfs_rev(self, graph, start, end):
-		"""反向深度搜索，尽量利用图中已有信息，提高效率"""
+	def graph_path_gen_rev(self, graph, start, end):
+		"""反向搜索，利用已有信息，提高效率"""
 		vect = Vector(0, 1)
 
 		# the stack
@@ -358,28 +384,28 @@ class Snake:
 		while len(path) > 0:
 			elem = path[0][0]
 
-			if elem == start:
+			# there should be only one path from start to end with the generated graph
+			if graph[elem.x, elem.y] == graph[start.x, start.y] + 1:
+				path.insert(0, [start])
 				break
 
-			nbs = []
 			for nb in random_seq([ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]):
 				# if can move forward to the neighbor, add to nbs
 				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]-1:
-					nbs.append(nb)
-
-			if len(nbs) > 0:
-				path.insert(0, nbs)
-			else:
-				while len(path) > 0 and len(path[0]) == 1:
-					path.pop(0)
-
-				if len(path)>0:
-					path[0].pop(0)
+					path.insert(0, [nb])
+					break
+			else: # unexpected case
+				print("WARNING: unexpected case")
 
 		return path
 
-	def graph_path_bfs(self, graph, start, end):
-		pass
+	def graph_aim_deadend(self, graph, start, aim):
+		pos = start + aim
+		return True
+
+	def graph_path_survive(self, graph, start, end):
+		path = []
+		return path
 
 
 	def get_aim_graph(self):
@@ -453,7 +479,6 @@ class Snake:
 				return aim
 
 		return None
-
 
 class Handler:
 	@classmethod
@@ -660,8 +685,8 @@ class App(Gtk.Application):
 	def reset_on_gameover(self):
 		# reset snake and app
 		self.snake.snake_reset()
-		self.timeout_id = None
 		self.snake_aim_buf = None
+		self.timeout_id = None
 
 		# reset widgets
 		self.tg_run.set_active(False)
@@ -858,10 +883,10 @@ class App(Gtk.Application):
 		# remove focus on init, must after show
 		self.window.set_focus(None)
 
-	@count_func_time
+	#@count_func_time
 	def update_snake_graph(self):
 		self.snake.graph_scan(self.debug['sub_mode'])
-		self.snake.graph_path_scan(self.snake.food, md_dfs=True)
+		self.snake.graph_path_scan(self.snake.food)
 
 	#@count_func_time
 	def check_update_after_move(self):
@@ -889,12 +914,15 @@ class App(Gtk.Application):
 			self.snake_aim_buf = None
 
 		if self.snake.move(aim):
-			self.check_update_after_move()
-
-			# set timer for next move
+			""" if current function not end in time, the timeout callback will
+			be delayed, which can be checked with time.process_time_ns() print
+			"""
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
+
 			self.lb_length.set_text('{}'.format(self.snake.length))
+			self.check_update_after_move()
 		else:
+			self.timeout_id = None
 			self.tg_run.set_sensitive(False)
 			print('game over, died')
 
@@ -1033,7 +1061,6 @@ class App(Gtk.Application):
 		cr.fill()
 
 		# draw snake
-		# todo: auto color
 		rgba = Gdk.RGBA()
 		rgba.parse('black')
 		cstr_00 = rgba.to_string()
@@ -1044,15 +1071,10 @@ class App(Gtk.Application):
 
 		colorful = (cstr_fg == cstr_bg == cstr_00)
 
-		if not colorful:
+		if colorful:
+			color = color_pool(self.snake.length)
+		else:
 			cr.set_source_rgba(*rgba)
-
-		def color_pool(n):
-			for i in range(0, n):
-				# set an offset so that blocks are not black
-				yield '#{:0>6}'.format(hex(int(i/n * 0xefffff+0x100000))[2:])
-
-		color = color_pool(self.snake.length)
 
 		# scale the body block and center it in the grid
 		s, r = (0.9, 0.2)
