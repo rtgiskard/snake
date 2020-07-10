@@ -23,7 +23,6 @@ todo:
 class DEBUG:
 	pause = False
 
-
 def echo_func(func):
 	@wraps(func)
 	def wrapper(*args, **kwargs):
@@ -55,7 +54,7 @@ def count_func_time(func):
 		ts_this = time.process_time_ns() - ts
 		ts_avg[0] += 1
 		ts_avg[1] = (ts_avg[1] * (ts_avg[0]-1) + ts_this)/ts_avg[0]
-		print("T({}) us: {:.2f}  {:.2f}:{}".format(func.__name__,
+		print('T({}) us: {:.2f}  {:.2f}:{}'.format(func.__name__,
 			ts_this/1000, ts_avg[1]/1000, ts_avg[0]))
 
 		return orig_return
@@ -159,6 +158,16 @@ class Vector(Dot):
 			return self
 		else:
 			return Vector(new_x, new_y)
+
+class VECTORS:
+	UP = Vector(0,-1)
+	DOWN = -UP
+	LEFT = UP.T
+	RIGHT = -LEFT
+
+	def __iter__(self):
+		return iter((self.UP, self.RIGHT, self.DOWN, self.LEFT))
+
 
 class Snake:
 	def __init__(self, width=40, height=40):
@@ -275,8 +284,6 @@ class Snake:
 
 	#@count_func_time
 	def graph_scan(self, md_fast=True):
-		vect = Vector(0, 1)
-
 		# in np, it's (row, col), it's saved/read in transposed style
 		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
 		pipe = [self.head]
@@ -292,7 +299,7 @@ class Snake:
 			dist_elem = graph[elem.x, elem.y]
 
 			# neighbors of head
-			neighbors = [ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]
+			neighbors = [ elem + aim for aim in VECTORS() ]
 
 			if dist_elem == 0:
 				# the head, can not go backward directly
@@ -344,8 +351,9 @@ class Snake:
 		self.graph_path = path
 
 	def graph_path_dfs(self, graph, start, end):
-		vect = Vector(0, 1)
-
+		"""正向深度搜索，无优化
+		大范围 DFS 时间复杂度与路径深度呈指数关系
+		"""
 		# the stack
 		path = [[start]]
 
@@ -356,7 +364,7 @@ class Snake:
 				break
 
 			nbs = []
-			for nb in random_seq([ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]):
+			for nb in random_seq([ elem + aim for aim in VECTORS() ]):
 				# if can move forward to the neighbor, add to nbs
 				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]+1:
 					nbs.append(nb)
@@ -376,8 +384,6 @@ class Snake:
 
 	def graph_path_gen_rev(self, graph, start, end):
 		"""反向搜索，利用已有信息，提高效率"""
-		vect = Vector(0, 1)
-
 		# the stack
 		path = [[end]]
 
@@ -389,13 +395,20 @@ class Snake:
 				path.insert(0, [start])
 				break
 
-			for nb in random_seq([ elem + vect, elem - vect, elem + vect.T, elem - vect.T ]):
+			# try to keep path straight
+			if len(path) > 1:
+				aim = path[0][0] - path[1][0]
+				choices = [ elem + aim for aim in (aim, aim.T, -aim.T) ]
+			else:
+				choices = random_seq([ elem + aim for aim in VECTORS() ])
+
+			for nb in choices:
 				# if can move forward to the neighbor, add to nbs
 				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]-1:
 					path.insert(0, [nb])
 					break
 			else: # unexpected case
-				print("WARNING: unexpected case")
+				raise Warning('UNEXPECTED CASE')
 
 		return path
 
@@ -672,10 +685,10 @@ class App(Gtk.Application):
 
 		# 注意绘图座标系正负与窗口上下左右的关系
 		self.map_arrow = {
-				'up': (PixbufRotation.NONE, Vector(0, -1)),
-				'down': (PixbufRotation.UPSIDEDOWN, Vector(0, 1)),
-				'left': (PixbufRotation.COUNTERCLOCKWISE, Vector(-1, 0)),
-				'right': (PixbufRotation.CLOCKWISE, Vector(1, 0))
+				'up': (PixbufRotation.NONE, VECTORS.UP),
+				'down': (PixbufRotation.UPSIDEDOWN, VECTORS.DOWN),
+				'left': (PixbufRotation.COUNTERCLOCKWISE, VECTORS.LEFT),
+				'right': (PixbufRotation.CLOCKWISE, VECTORS.RIGHT)
 				}
 
 		self.snake = Snake(self.data['block_area']['width'], self.data['block_area']['height'])
@@ -885,6 +898,10 @@ class App(Gtk.Application):
 
 	#@count_func_time
 	def update_snake_graph(self):
+		""" after scan:
+			1. graph is present(even all zero)
+			2. path is present(even empty)
+		"""
 		self.snake.graph_scan(self.debug['sub_mode'])
 		self.snake.graph_path_scan(self.snake.food)
 
@@ -899,7 +916,7 @@ class App(Gtk.Application):
 		2. the graph path
 			2.1 after graph update
 		"""
-		# if in graph auto mode
+		# if in graph-auto mode
 		if self.data['tg_auto'] and self.debug['auto_mode'] == 0:
 			# if eat food on move, or off-path
 			if self.snake.graph is None or self.snake.head not in self.snake.graph_path:
