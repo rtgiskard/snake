@@ -312,17 +312,17 @@ class Snake:
 
 		return self.aim.trans_linear(matrix, inplace=False)
 
-	def get_next_aim(self, mode, md_sub=True):
+	def get_auto_aim(self, mode, md_sub=True):
 		"""
 		return None if no valid aim, which means died and just keep aim
 
 		take care of the init operation for conrresponding auto mode
 		"""
 
-		if mode == 0:		# graph
+		if mode == AutoMode.GRAPH:
 			aim_next = self.get_aim_graph()
 
-		elif mode == 1:		# greedy
+		elif mode == AutoMode.GREEDY:
 			aim_next = self.get_aim_greedy(md_sub)
 
 		else:				# random

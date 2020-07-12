@@ -125,22 +125,21 @@ class Handler:
 		elif KEY_PRESS and keyname == 'g':
 			if KeyName == 'G':
 				app.update_snake_graph()
-				app.debug['show_graph'] = True
+				app.data['show_graph'] = True
 			else:
-				app.debug['show_graph'] = not app.debug['show_graph']
+				app.data['show_graph'] = not app.data['show_graph']
 
 			app.draw.queue_draw()
 
 		elif KEY_PRESS and keyname == 's':
-			if KeyName == 'S':
-				app.debug['sub_mode'] = True
-			else:
-				app.debug['sub_mode'] = False
+			app.data['sub_switch'] = not app.data['sub_switch']
 
 		elif KEY_PRESS and keyname == 'm':
-			app.debug['auto_mode'] += 1
-			app.debug['auto_mode'] %= 3
-			print('auto_mode: {}'.format(app.auto_modes[app.debug['auto_mode']]))
+			automode_list = list(AutoMode)
+			id_cur = automode_list.index(app.data['auto_mode'])
+			id_next = (id_cur + 1) % len(automode_list)
+			app.data['auto_mode'] = automode_list[id_next]
+			print('auto_mode: {}'.format(app.data['auto_mode'].name))
 
 		if app.snake.is_died():
 			if KEY_PRESS and keyname == 'r':
@@ -199,15 +198,11 @@ class SnakeApp(Gtk.Application):
 				'image_arrow': './data/pix/arrow.svg',
 				'image_arrow_key': './data/pix/arrow-key.svg',
 				'image_snake_food': './data/pix/bonus5.svg',
-				}
 
-		self.debug = {
-				'auto_mode': 0,
-				'sub_mode': True,
+				'auto_mode': AutoMode.GRAPH,
+				'sub_switch': True,
 				'show_graph': False,
 				}
-
-		self.auto_modes = ['graph', 'greedy', 'random']
 
 		# 注意绘图座标系正负与窗口上下左右的关系
 		self.map_arrow = {
@@ -428,7 +423,7 @@ class SnakeApp(Gtk.Application):
 			1. graph is present(even all zero)
 			2. path is present(even empty)
 		"""
-		self.snake.graph_scan(self.debug['sub_mode'])
+		self.snake.graph_scan(self.data['sub_switch'])
 		self.snake.graph_path_scan(self.snake.food)
 
 	#@count_func_time
@@ -443,7 +438,7 @@ class SnakeApp(Gtk.Application):
 			2.1 after graph update
 		"""
 		# if in graph-auto mode
-		if self.data['tg_auto'] and self.debug['auto_mode'] == 0:
+		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
 			# if eat food on move, or off-path
 			if self.snake.graph is None or self.snake.head not in self.snake.graph_path:
 				self.update_snake_graph()
@@ -451,7 +446,7 @@ class SnakeApp(Gtk.Application):
 	#@count_func_time
 	def timer_move(self, data):
 		if self.data['tg_auto'] and not self.snake_aim_buf:
-			aim = self.snake.get_next_aim(self.debug['auto_mode'], self.debug['sub_mode'])
+			aim = self.snake.get_auto_aim(self.data['auto_mode'], self.data['sub_switch'])
 		else:
 			aim = self.snake_aim_buf
 			self.snake_aim_buf = None
@@ -644,7 +639,7 @@ class SnakeApp(Gtk.Application):
 		if self.snake.is_died():
 			self.draw_gameover(cr)
 
-		if self.debug['show_graph']:
+		if self.data['show_graph']:
 			self.draw_snake_graph(cr)
 			self.draw_snake_graph_path(cr)
 
