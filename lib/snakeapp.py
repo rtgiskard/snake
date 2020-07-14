@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # coding: utf8
 
-
 import math
 import numpy as np
+import json
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -17,6 +17,7 @@ from .decorator import *
 from .dataref import *
 from .functions import *
 from .snake import Snake
+from . import NAME, VERSION, AUTHOR, COPYRIGHT, LICENSE_TYPE
 
 
 class Handler:
@@ -30,11 +31,11 @@ class Handler:
 
 	@classmethod
 	def on_toggled(cls, widget, app):
-		label_text = widget.get_label()
-		widget_label = widget.get_child()
-		widget_label.set_markup(app.toggle_text(label_text, widget.get_active()))
-
+		"""get avtive state, sync to data"""
 		active_state = widget.get_active()
+		widget_label = widget.get_child()
+		label_text = widget_label.get_text()
+		widget_label.set_markup(app.toggle_text(label_text, active_state))
 
 		if widget is app.tg_auto:
 			app.data['tg_auto'] = active_state
@@ -45,11 +46,11 @@ class Handler:
 				# disable combo once snake active
 				app.area_combo.set_sensitive(False)
 
-			if active_state:
 				app.timeout_id = GLib.timeout_add(1000/app.data['speed'], app.timer_move, None)
 			else:
 				if app.timeout_id:
 					GLib.source_remove(app.timeout_id)
+					app.timeout_id = None
 
 	@classmethod
 	def on_combo_changed(cls, widget, app):
@@ -100,9 +101,34 @@ class Handler:
 		app.sync_color(widget)
 
 	@classmethod
+	def on_about_exit(cls, widget, response, app):
+		widget.destroy()
+		app.about_dialog = None
+
+	@classmethod
+	def on_reset(cls, action, param, app):
+		app.reset_game(reset_all=True)
+
+	@classmethod
+	def on_about(cls, action, param, app):
+		app.show_about_dialog()
+
+	@classmethod
+	def on_save(cls, action, param, app):
+		app.save_or_load_game(is_save=True)
+
+	@classmethod
+	def on_load(cls, action, param, app):
+		app.save_or_load_game(is_save=False)
+
+	@classmethod
 	def on_keyboard_event(cls, widget, event, app):
 		KeyName = Gdk.keyval_name(event.keyval)
 		keyname = KeyName.lower()
+
+		# if <Ctrl>, return and pass on
+		if event.state & Gdk.ModifierType.CONTROL_MASK:
+			return False
 
 		KEY_PRESS = (event.type == Gdk.EventType.KEY_PRESS)
 		KEY_RELEASE = (event.type == Gdk.EventType.KEY_RELEASE)
@@ -122,28 +148,9 @@ class Handler:
 		if KEY_PRESS and keyname == 'h':
 			app.panel.set_visible(not app.panel.get_visible())
 
-		elif KEY_PRESS and keyname == 'g':
-			if KeyName == 'G':
-				app.update_snake_graph()
-				app.data['show_graph'] = True
-			else:
-				app.data['show_graph'] = not app.data['show_graph']
-
-			app.draw.queue_draw()
-
-		elif KEY_PRESS and keyname == 's':
-			app.data['sub_switch'] = not app.data['sub_switch']
-
-		elif KEY_PRESS and keyname == 'm':
-			automode_list = list(AutoMode)
-			id_cur = automode_list.index(app.data['auto_mode'])
-			id_next = (id_cur + 1) % len(automode_list)
-			app.data['auto_mode'] = automode_list[id_next]
-			print('auto_mode: {}'.format(app.data['auto_mode'].name))
-
 		if app.snake.is_died():
 			if KEY_PRESS and keyname == 'r':
-				app.reset_on_gameover()
+				app.reset_game()
 
 			return True
 
@@ -169,6 +176,25 @@ class Handler:
 		elif KEY_PRESS and keyname == 'bracketright':
 			app.bt_speed.spin(Gtk.SpinType.STEP_FORWARD, 1)
 
+		elif KEY_PRESS and keyname == 'g':
+			if KeyName == 'G':
+				app.update_snake_graph()
+				app.data['show_graph'] = True
+			else:
+				app.data['show_graph'] = not app.data['show_graph']
+
+			app.draw.queue_draw()
+
+		elif KEY_PRESS and keyname == 's':
+			app.data['sub_switch'] = not app.data['sub_switch']
+
+		elif KEY_PRESS and keyname == 'm':
+			automode_list = list(AutoMode)
+			id_cur = automode_list.index(app.data['auto_mode'])
+			id_next = (id_cur + 1) % len(automode_list)
+			app.data['auto_mode'] = automode_list[id_next]
+			print('auto_mode: {}'.format(app.data['auto_mode'].name))
+
 		return True
 
 class SnakeApp(Gtk.Application):
@@ -182,7 +208,7 @@ class SnakeApp(Gtk.Application):
 		self.data = {
 				'snake_width': 8,
 				'block_size': 16,
-				'block_area': {'width':40, 'height':40},
+				'block_area': {'width':40, 'height':28},
 				'block_area_limit': {'min':10, 'max':999},
 				'block_area_margin': 10,
 				'block_area_scale': 1,
@@ -214,13 +240,19 @@ class SnakeApp(Gtk.Application):
 
 		self.snake = Snake(self.data['block_area']['width'], self.data['block_area']['height'])
 		self.snake_aim_buf = None
-		self.timeout_id = None
 
-	def reset_on_gameover(self):
+		self.timeout_id = None
+		self.about_dialog = None
+
+	def reset_game(self, reset_all=False):
 		# reset snake and app
 		self.snake.snake_reset()
 		self.snake_aim_buf = None
-		self.timeout_id = None
+
+		# reset timeout id
+		if self.timeout_id:
+			GLib.source_remove(self.timeout_id)
+			self.timeout_id = None
 
 		# reset widgets
 		self.tg_run.set_active(False)
@@ -230,11 +262,171 @@ class SnakeApp(Gtk.Application):
 		self.tg_run.set_sensitive(True)
 		self.area_combo.set_sensitive(True)
 
-		# reset length label
-		self.lb_length.set_text('{}'.format(self.snake.length))
+		if reset_all:
+			self.data['auto_mode'] = AutoMode.GRAPH
+			self.data['sub_switch'] = True
+			self.data['show_graph'] = False
+			self.data['fg_color'] = 'grey'
+			self.data['bg_color'] = 'black'
+			self.data['speed'] = 8
+			self.data['block_area'] = {'width':40, 'height':28}
 
-		# redraw
-		self.draw.queue_draw()
+		self.init_state_from_data()
+
+	def run_filechooser(self, is_save=True):
+		if is_save:
+			dialog_action = Gtk.FileChooserAction.SAVE
+			dialog_button = Gtk.STOCK_SAVE
+		else:
+			dialog_action = Gtk.FileChooserAction.OPEN
+			dialog_button = Gtk.STOCK_OPEN
+
+		dialog = Gtk.FileChooserDialog(
+			'Select File', self.window, dialog_action,
+			(
+				Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+				dialog_button, Gtk.ResponseType.OK,
+			),
+		)
+
+		self.filechooser_filter(dialog)
+
+		if dialog.run() == Gtk.ResponseType.OK:
+			filename = dialog.get_filename()
+		else:
+			filename = None
+
+		dialog.destroy()
+
+		return filename
+
+	def filechooser_filter(self, dialog):
+		filter_json = Gtk.FileFilter()
+		filter_json.set_name('Json')
+		filter_json.add_mime_type('application/json')
+		dialog.add_filter(filter_json)
+
+		filter_any = Gtk.FileFilter()
+		filter_any.set_name('Any files')
+		filter_any.add_pattern('*')
+		dialog.add_filter(filter_any)
+
+	def show_about_dialog(self):
+		if self.about_dialog:
+			self.about_dialog.present()
+		else:
+			about_dia = Gtk.AboutDialog()
+			self.about_dialog = about_dia
+
+			# the close button will not issue 'close' event
+			about_dia.connect('response', Handler.on_about_exit, self)
+
+			# about dialog
+			about_dia.set_authors([AUTHOR])
+			about_dia.set_program_name(NAME)
+			about_dia.set_version(VERSION)
+			about_dia.set_copyright(COPYRIGHT)
+			about_dia.set_license_type(Gtk.License.__dict__[LICENSE_TYPE])
+			about_dia.set_logo(self.pix_icon)
+			about_dia.set_destroy_with_parent(True)
+			about_dia.set_title('About {}'.format(NAME))
+
+			about_dia.show()
+
+	def show_warning_dialog(self, text):
+		dialog = Gtk.MessageDialog(
+			self.window,
+			Gtk.DialogFlags.DESTROY_WITH_PARENT,
+			Gtk.MessageType.WARNING,
+			Gtk.ButtonsType.CLOSE,
+			text,
+		)
+
+		# lambda itself is the callback function
+		dialog.connect('response', lambda *args: dialog.destroy())
+		dialog.show()
+
+	def save_or_load_game(self, is_save=True):
+		# pause game
+		self.tg_run.set_active(False)
+
+		filename = self.run_filechooser(is_save)
+
+		if not filename:
+			return True
+
+		if is_save:
+			text = 'save'
+			with open(filename, 'w') as fd:
+				json.dump(self.save_data(), fd)
+				return True
+		else:
+			text = 'load'
+			with open(filename, 'r') as fd:
+				if self.load_data(json.load(fd)):
+					return True
+
+		# todo: pop dialog for failed operation
+		self.show_warning_dialog('Failed to {} game'.format(text))
+
+		return False
+
+	def save_data(self):
+		snake_data = self.snake.snake_save()
+		app_data = { x:self.data[x] for x in [
+			'block_area', 'bg_color', 'fg_color', 'speed',
+			'tg_auto', 'auto_mode', 'sub_switch', 'show_graph' ] }
+
+		# convert auto_mode to str
+		app_data['auto_mode'] = app_data['auto_mode'].name
+
+		return { 'snake': snake_data, 'app': app_data }
+
+	def load_data(self, data):
+		# reset current game
+		self.reset_game(reset_all=True)
+
+		# load snake first
+		if not self.snake.snake_load(data['snake']):
+			return False
+
+		# load data for app, without verification
+		for x in [ 'block_area', 'bg_color', 'fg_color', 'speed',
+			'tg_auto', 'auto_mode', 'sub_switch', 'show_graph' ]:
+			self.data[x] = data['app'][x]
+
+		# convert auto_mode back to enum
+		self.data['auto_mode'] = AutoMode[self.data['auto_mode']]
+
+		# recover gui state, set snake length label
+		self.init_state_from_data()
+
+		# pause and de-sensitive combo_entry after restore
+		self.tg_run.set_active(False)
+		self.area_combo.set_sensitive(False)
+
+		return True
+
+	def init_state_from_data(self):
+		# reset bt_speed
+		self.bt_speed.set_value(self.data['speed'])
+
+		# reset color
+		self.set_color(self.color_fg, self.color_bg)
+
+		# the toggle button
+		self.tg_auto.set_active(self.data['tg_auto'])
+		self.tg_run.set_active(self.data['tg_run'])
+
+		# update the combo_entry for area size only, no more operation
+		combo_entry = self.area_combo.get_child()
+		combo_entry.set_text(self.get_block_area_text())
+
+		# area resize, queue redraw, may reset snake if resize
+		self.req_draw_size_mini()
+
+		# reset length label from snake
+		self.lb_length.set_text('{}'.format(self.snake.length))
 
 	def get_block_area_text(self):
 		area = self.data['block_area']
@@ -244,10 +436,11 @@ class SnakeApp(Gtk.Application):
 		try:
 			width, height = ( int(x) for x in text.split('x') )
 
-			assert width >= self.data['block_area_limit']['min']
-			assert width <= self.data['block_area_limit']['max']
-			assert height >= self.data['block_area_limit']['min']
-			assert height <= self.data['block_area_limit']['max']
+			if width < self.data['block_area_limit']['min'] or \
+				width > self.data['block_area_limit']['max'] or \
+				height < self.data['block_area_limit']['min'] or \
+				height > self.data['block_area_limit']['max']:
+				raise Exception()
 		except:
 			return None
 		else:
@@ -292,9 +485,9 @@ class SnakeApp(Gtk.Application):
 		scale = scale_x if scale_x < scale_y else scale_y
 		self.data['block_area_scale'] = scale
 
-		# snake resize && reset
-		self.snake.area_resize(area_w, area_h, True)
-		self.snake.snake_reset()
+		if self.snake.area_w != area_w or self.snake.area_h != area_h:
+			# snake resize && reset is not match
+			self.snake.area_resize(area_w, area_h, True)
 
 		# request for mini size
 		self.draw.set_size_request(area[0] * scale, area[1] * scale)
@@ -325,6 +518,7 @@ class SnakeApp(Gtk.Application):
 
 		self.window = self.builder.get_object('Snake')
 		self.panel = self.builder.get_object('PANEL')
+		self.header = self.builder.get_object('HEADER')
 
 		self.draw = self.builder.get_object('DRAW')
 		self.tg_auto = self.builder.get_object('TG_AUTO')
@@ -346,15 +540,45 @@ class SnakeApp(Gtk.Application):
 
 		self.img_logo.set_from_pixbuf(self.pix_icon.scale_simple(24, 24, InterpType.BILINEAR))
 
+	def init_menu(self):
+		menu_items = [
+				('Reset', Handler.on_reset, ['<Ctrl>R']),
+				('Save', Handler.on_save, ['<Ctrl>S']),
+				('Load', Handler.on_load, ['<Ctrl>L']),
+				('About', Handler.on_about, [])
+			]
+
+		menu = Gio.Menu()
+
+		for item in menu_items:
+			action_name = item[0].lower()
+			action_dname = 'app.' + action_name
+			action_label = item[0]
+			action_callback = item[1]
+			action_accels = item[2]
+
+			action = Gio.SimpleAction.new(action_name, None)
+			action.connect('activate', action_callback, self)
+			self.add_action(action)
+
+			self.set_accels_for_action(action_dname, action_accels)
+			menu.append(action_label, action_dname)
+
+		self.set_app_menu(menu)
+
 	def init_ui(self):
 		self.load_widgets()		# load widgets
 		self.load_image()		# load image resource
+		self.init_menu()		# init app menu
 
 		# attach the window to app
 		self.window.set_application(self)
 
+		# header bar
+		self.header.set_decoration_layout('menu:minimize,close')
+
 		# main window
-		self.window.set_title('Snake')
+		self.window.set_title(NAME)
 		self.window.set_icon(self.pix_icon)
 
 		# connect keyevent
@@ -367,7 +591,7 @@ class SnakeApp(Gtk.Application):
 		# toggle button
 		self.tg_auto.connect('toggled', Handler.on_toggled, self)
 		self.tg_run.connect('toggled', Handler.on_toggled, self)
-		# set toggle status on init
+		# init via toggle, set_active() only trigger if state changed
 		self.tg_auto.toggled()
 		self.tg_run.toggled()
 
@@ -375,16 +599,12 @@ class SnakeApp(Gtk.Application):
 		speed_adj = Gtk.Adjustment(**self.data['speed_adj'])
 		self.bt_speed.set_adjustment(speed_adj)
 		self.bt_speed.connect('value-changed', Handler.on_spin_value_changed, self)
-		# set default speed on init, which will emit value-changed
-		self.bt_speed.set_value(self.data['speed'])
 
 		# color box
 		self.color_fg.set_title('前景色')
 		self.color_bg.set_title('背景色')
 		self.color_fg.connect('color-set', Handler.on_color_set, self)
 		self.color_bg.connect('color-set', Handler.on_color_set, self)
-		# set color from data on init
-		self.set_color(self.color_fg, self.color_bg)
 
 		# arrow image
 		self.arrows = {}
@@ -403,10 +623,9 @@ class SnakeApp(Gtk.Application):
 		self.area_combo.connect('changed', Handler.on_combo_changed, self)
 		combo_entry = self.area_combo.get_child()
 		combo_entry.connect('activate', Handler.on_combo_entry_activate, self)
-		combo_entry.set_text(self.get_block_area_text())
 
-		# request for draw area size on init
-		self.req_draw_size_mini()
+		# init gui state from data
+		self.init_state_from_data()
 
 		# to avoid highlight in the entry
 		#self.bt_speed.grab_focus_without_selecting()
@@ -652,4 +871,4 @@ class SnakeApp(Gtk.Application):
 		else:
 			self.window.present()
 
-# vi: set ts=4 noexpandtab foldmethod=indent :
+# vi: set ts=4 noexpandtab foldmethod=indent foldignore= :

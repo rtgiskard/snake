@@ -2,6 +2,7 @@
 # coding: utf8
 
 import random
+import numbers
 import numpy as np
 
 from .datatypes import Vector
@@ -55,17 +56,7 @@ class Snake:
 
 	def is_aim_valid(self, aim):
 		head_next = self.head + aim
-		return self.is_inside(head_next) and head_next not in self.body
-
-	def is_aim_right(self, aim):
-		# todo: more check
-		if self.is_aim_valid(aim):
-			if self.graph is not None:
-				return self.graph_aim_deadend(self.graph, self.head, aim)
-			else:
-				return True
-
-		return False
+		return self.is_inside(head_next) and head_next not in self.body[1:]
 
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
@@ -78,15 +69,76 @@ class Snake:
 		# re-seed on reset
 		random.seed()
 
-	def area_resize(self, width, height, reset=False):
-		if not reset:
-			for pos in [ self.food, *self.body ]:
-				# the original pos is inside
-				if pos.x >= width or pos.y >= height:
-					return False
+	def snake_load(self, data):
+		bacup_area = (self.area_w, self.area_h)
 
-		self.area_w = width
-		self.area_h = height
+		try:
+			area_w, area_h = data['area']
+			body = [ Vector(*pos) for pos in data['body'] ]
+			aim = Vector(*data['aim'])
+			food = Vector(*data['food'])
+
+			# verify
+			# check integral
+			for pos in body + [ aim, food, Vector(area_w, area_h) ]:
+				for num in pos:
+					if not isinstance(num, numbers.Integral):
+						raise Exception()
+
+			# check area limit, aim, food position
+			if area_w < 10 or area_h < 10 or \
+					aim not in VECTORS() or \
+					food in body:
+				raise Exception()
+
+			# check reverse aim
+			if len(body) > 1 and aim + body[0] == body[1]:
+				raise Exception()
+
+			# assign area limit for is_inside()
+			self.area_w, self.area_h = (area_w, area_h)
+
+			# check inside
+			for pos in body + [food]:
+				if not self.is_inside(pos):
+					raise Exception()
+		except:
+			self.area_w, self.area_h = bacup_area
+			return False
+		else:
+			self.snake_reset()
+
+			self.body = body
+			self.aim = aim
+			self.food = food
+
+			return True
+
+	def snake_save(self):
+		# return body with list() for direct dump
+		return {
+				'area': [ self.area_w, self.area_h ],
+				'body': [ (pos.x, pos.y) for pos in self.body ],
+				'aim': ( self.aim.x, self.aim.y ),
+				'food': ( self.food.x, self.food.y )
+				}
+
+	def area_resize(self, width, height, do_reset=False):
+		if do_reset:
+			self.area_w = width
+			self.area_h = height
+
+			# reset for body rely on new area
+			self.snake_reset()
+		else:
+			if width < self.area_w or height < self.area_h:
+				for pos in [ self.food, *self.body ]:
+					# the original pos is inside
+					if pos.x >= width or pos.y >= height:
+						return False
+
+			self.area_w = width
+			self.area_h = height
 
 		return True
 
@@ -131,8 +183,59 @@ class Snake:
 			else:
 				space_id -= 1
 
-	#@count_func_time
+	@count_func_time
 	def graph_scan(self, md_fast=True):
+		"""best first search"""
+
+		dist = lambda a,b: abs(a.x-b.x) + abs(a.y-b.y)
+		dist_adj = 2
+
+		# in np, it's (row, col), it's saved/read in transposed style
+		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+
+		pipe = [self.head]
+
+		while len(pipe) > 0:
+
+			dist_ref = graph[pipe[0].x, pipe[0].y] + dist(pipe[0], self.food)
+			pipe_next = []
+
+			for elem in pipe:
+				if md_fast and elem == self.food:
+					break
+
+				# distance from head to the elem
+				dist_elem = graph[elem.x, elem.y]
+
+				if dist_elem + dist(elem, self.food) - dist_ref < dist_adj:
+					# neighbors of head
+					neighbors = [ elem + aim for aim in VECTORS() ]
+
+					if dist_elem == 0:
+						# the head, can not go backward directly
+						neighbors.remove(self.head - self.aim)
+						body_check = self.body[1:]
+					else:
+						# the tail have moved forward
+						body_check = self.body[:-dist_elem]
+
+					for nb in neighbors:
+						if self.is_inside(nb) and nb not in body_check:
+							if graph[nb.x, nb.y] == 0:
+								graph[nb.x, nb.y] = dist_elem + 1
+								pipe_next.append(nb)
+				else:
+					pipe_next.append(elem)
+
+			pipe_next.sort(key=lambda pos: graph[pos.x, pos.y] + dist(pos, self.food))
+			pipe = pipe_next
+
+		self.graph = graph
+
+	@count_func_time
+	def graph_scan_bfs(self, md_fast=True):
+		"""breadth first search"""
+
 		# in np, it's (row, col), it's saved/read in transposed style
 		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
 		pipe = [self.head]
@@ -263,6 +366,17 @@ class Snake:
 
 	def graph_aim_deadend(self, graph, start, aim):
 		pos = start + aim
+
+		visit_map = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+
+		pipe = [(pos, None)]
+
+		while len(pipe) > 0:
+			elem = pipe.pop(0)
+			visit_map[elem.x, elem.y] = True
+
+
 		return True
 
 	def graph_path_survive(self, graph, start, end):
@@ -337,7 +451,7 @@ class Snake:
 
 		# in case, fallback
 		for aim in aim_choices:
-			if self.is_aim_right(aim):
+			if self.is_aim_valid(aim):
 				return aim
 
 		return None
