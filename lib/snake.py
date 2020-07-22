@@ -167,21 +167,29 @@ class Snake:
 		return True
 
 	def new_food(self):
+		""" 随机生成食物
+
+			策略：
+				1. 生成地图
+				2. 标记 body 区域
+				3. 从未标记区域随机选择
+		"""
+
 		if self.is_full():
 			return None
 
-		space_id = random.randint(0, self.area_size - self.length - 1)
+		# init to True for later nonzero()
+		snake_map = np.ones((self.area_w, self.area_h), dtype='bool')
 
-		for seq in range(0, self.area_size):
-			vec_seq = Vector(seq % self.area_w, seq // self.area_w)
+		for elem in self.body:
+			snake_map[elem.x, elem.y] = False
 
-			if vec_seq in self.body:
-				continue
+		new_x,new_y = random.choice(np.transpose(snake_map.nonzero()))
+		return Vector(new_x, new_y)
 
-			if space_id == 0:
-				return vec_seq
-			else:
-				space_id -= 1
+	def rect_border_body(self, with_food=True):
+		"""获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制"""
+		rect = [ x_min, y_min, x_max, y_max ]
 
 	@count_func_time
 	def scan_path_and_graph(self, md_fast=True):
