@@ -79,4 +79,27 @@ class Vector(Dot):
 		else:
 			return Vector(new_x, new_y)
 
+class Rect:
+	def __init__(self, x0, y0, x1, y1):
+		self.x0, self.y0 = x0, y0
+		self.x1, self.y1 = x1, y1
+
+	def __iter__(self):
+		return iter((self.x0, self.y0, self.x1, self.y1))
+
+	def is_inside(self, node):
+		return node.x >= self.x0 and node.x <= self.x1 \
+				and node.y >= self.y0 and node.y <= self.y1
+
+	def extend(self, node):
+		if node.x < self.x0:
+			self.x0 = node.x
+		elif node.x > self.x1:
+			self.x1 = node.x
+
+		if node.y < self.y0:
+			self.y0 = node.y
+		elif node.y > self.y1:
+			self.y1 = node.y
+
 # vi: set ts=4 noexpandtab foldmethod=indent :

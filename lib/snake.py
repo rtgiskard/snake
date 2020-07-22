@@ -5,7 +5,7 @@ import random
 import numbers
 import numpy as np
 
-from .datatypes import Vector
+from .datatypes import *
 from .decorator import *
 from .dataref import *
 from .functions import *
@@ -189,13 +189,42 @@ class Snake:
 		new_x,new_y = random.choice(np.transpose(snake_map.nonzero()))
 		return Vector(int(new_x), int(new_y))
 
-	def rect_border_body(self, with_food=True):
-		"""获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制"""
-		rect = [ x_min, y_min, x_max, y_max ]
+	def body_rect_with_border(self, body, food=None):
+		"""获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制
+
+			外扩一周后应足以囊括有效搜索区域
+		"""
+
+		# 以 head 初始 rect
+		rect = Rect(*body[0], *body[0])
+
+		# 最小矩形
+		for elem in body[1:]:
+			rect.extend(elem)
+
+		# 边界内外扩一周
+		if rect.x0 > 0:
+			rect.x0 -= 1
+		if rect.y0 > 0:
+			rect.y0 -= 1
+		if rect.x1 < self.area_w-1:
+			rect.x1 += 1
+		if rect.y1 < self.area_h-1:
+			rect.y1 += 1
+
+		# food
+		if food:
+			rect.extend(food)
+
+		return rect
+
 
 	@count_func_time
 	def scan_path_and_graph(self, md_fast=True):
 		"""best first search"""
+
+		# bfs 搜索边界
+		rect = self.body_rect_with_border(self.body, self.food)
 
 		# in np, it's (row, col), it's saved/read in transposed style
 		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
@@ -238,7 +267,7 @@ class Snake:
 						body_check = self.body[:-dist_elem]
 
 					for nb in neighbors:
-						if self.is_inside(nb) and nb not in body_check:
+						if rect.is_inside(nb) and nb not in body_check:
 							if graph[nb.x, nb.y] == 0:
 								graph[nb.x, nb.y] = dist_elem + 1
 								graph_parent[nb.x, nb.y] = elem
@@ -287,6 +316,9 @@ class Snake:
 			BFS 终止条件，搜索首度进入原本的 body
 		"""
 
+		# bfs 搜索边界
+		rect = self.body_rect_with_border(body)
+
 		# if the dtype is uint, -graph[*] is still unsigned ..
 		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
 
@@ -305,7 +337,7 @@ class Snake:
 				body_safe = body[-dist_elem:]
 
 			for nb in [ elem + vect for vect in VECTORS() ]:
-				if self.is_inside(nb) and graph[nb.x, nb.y] == 0:
+				if rect.is_inside(nb) and graph[nb.x, nb.y] == 0:
 					if nb in body_safe:
 						return True
 
