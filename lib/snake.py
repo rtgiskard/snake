@@ -2,6 +2,7 @@
 # coding: utf8
 
 import random
+import heapq
 import numbers
 import numpy as np
 
@@ -11,9 +12,12 @@ from .dataref import *
 from .functions import *
 
 """
-todo:
-. 封闭区间最大长度(重扫描时间点长度二分)
-. 如到达食物后，围成空间不足长度，则游荡会再查看
+Snake:
+	1. after eat last food, no food is able to be generated,
+		the snake will keep run forever(circle of life: COL)
+	2. the snake is allowed to follow it's tail closely:
+		tail followed by head.
+		this is decided by is_aim_valid() and move()
 """
 
 class Snake:
@@ -56,7 +60,7 @@ class Snake:
 
 	def is_aim_valid(self, aim):
 		head_next = self.head + aim
-		return self.is_inside(head_next) and head_next not in self.body[1:]
+		return self.is_inside(head_next) and head_next not in self.body[1:-1]
 
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
@@ -143,8 +147,19 @@ class Snake:
 		return True
 
 	def move(self, aim=None):
-		""" move after died may revive the snake """
-		if aim: # set new direction
+		"""
+		parameter:
+			aim: the direction to move on,
+				need pre-check for valid move
+		return: bool
+			True: if alive after move
+			False: if not
+
+		note:
+			1. move after died may revive the snake
+		"""
+
+		if aim:	# set new direction
 			self.aim = aim
 		else:	# keep moving
 			aim = self.aim
@@ -161,10 +176,7 @@ class Snake:
 			self.body.pop()
 
 		# return after pop even died
-		if self.is_died():
-			return False
-
-		return True
+		return (not self.is_died())
 
 	def new_food(self):
 		""" 随机生成食物
@@ -188,6 +200,26 @@ class Snake:
 		# or json dump may failed with it
 		new_x,new_y = random.choice(np.transpose(snake_map.nonzero()))
 		return Vector(int(new_x), int(new_y))
+
+
+	def body_after_eat(self):
+		"""called right after scan and food is reachable"""
+
+		virt_length = self.length + 1
+		path_length = len(self.path)
+
+		# construct new body after eat food
+		virt_body = []
+
+		# both head and food is in the path
+		for i in range(min(virt_length, path_length)):
+			virt_body.append(self.path[-i-1])
+
+		# if virt_length <= path_length, will not enter loop
+		for i in range(virt_length - path_length):
+			virt_body.append(self.body[i+1])
+
+		return virt_body
 
 	def body_rect_with_border(self, body, food=None):
 		"""获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制
@@ -219,134 +251,143 @@ class Snake:
 		return rect
 
 
+	def BFS(self, graph, start=None, end=None, restrict=None):
+		"""A* best first search
+
+		parameters:
+			graph: a list of info to construct the graph
+				[ area_w, area_h, body ]
+			start: the search start point and related info
+				None: default to body[0]
+				for dynamic body on move, it should be body[0]
+			end: the point where search can stop
+				None for circle of life
+			restrict: list of restrictions for the search
+				[ rect, aim ]
+
+				rect: 优化的搜索边界
+				aim: 初始方向
+
+		return:
+			(path, graph)
+
+			path: the path to follow
+			graph: a map for all the distance from start to the scaned point
+		"""
+		# parse parameters
+		array_dim = graph[:2]
+		body = graph[-1]
+		rect, aim_0 = restrict
+
+		# start should be body[0]
+		if start is None:
+			start = body[0]
+
+		# in np, it's (row, col), it's saved/read in transposed style
+		map_dist = np.zeros(array_dim, dtype=np.int32)
+		map_parent = np.zeros(array_dim, dtype=Vector)
+
+		# set cost() and end_set() according to end
+		if end is None:
+			# 相同优先级: pqueue 退化为 queue, A* 退化成 Dijkstra's
+			cost = lambda elem: 1
+			end_set = lambda x: body[-x:] if x>0 else []
+		else:
+			# 成本评估：已确认 + 预估
+			cost = lambda elem: map_dist[elem.x, elem.y] \
+					+ ( abs(end.x-elem.x) + abs(end.y-elem.y) )
+			end_set = lambda x: [ end ]
+
+
+		# 优先队列
+		pqueue = []
+
+		# push_ct 避免比较 vector，同时保证：相同优先级 FIFO
+		push_ct = 0
+		heapq.heappush(pqueue, (0, push_ct, start))
+		# set the start parent to start - aim_0
+		map_parent[start.x, start.y] = start - aim_0
+
+		# generate map_dist
+		while len(pqueue) > 0:
+			_cost, _ct, elem = heapq.heappop(pqueue)
+
+			# distance from head to the elem
+			dist_elem = map_dist[elem.x, elem.y]
+
+			# check end loop
+			if elem in end_set(dist_elem):
+				if end is None:		# for COL BFS, assgin to end
+					end = elem	
+				break
+
+			# neighbors of head
+			neighbors = [ elem + aim for aim in VECTORS() ]
+			# can not go backward
+			neighbors.remove(map_parent[elem.x, elem.y])
+
+			# the tail have moved forward
+			void_set = body[:-dist_elem-1]
+
+			for nb in neighbors:
+				if rect.is_inside(nb) and map_dist[nb.x, nb.y] == 0:
+					if nb not in void_set:
+						map_dist[nb.x, nb.y] = dist_elem + 1
+						map_parent[nb.x, nb.y] = elem
+
+						push_ct += 1
+						heapq.heappush(pqueue, (cost(nb), push_ct, nb))
+
+		# generate path, check end before map_dist
+		if end and map_dist[end.x, end.y]:
+			path = [end]
+			# the `do .. while()` is neccessary for the case head == end,
+			# eg. snake with length equals 1 in COL scan
+			while True:
+				path.insert(0, map_parent[path[0].x, path[0].y])
+				if path[0] == start:
+					break
+		else:
+			path = []
+
+		return (path, map_dist)
+
 	@count_func_time
-	def scan_path_and_graph(self, md_fast=True):
+	def scan_path_and_graph(self):
 		"""best first search"""
 
 		# bfs 搜索边界
 		rect = self.body_rect_with_border(self.body, self.food)
 
-		# in np, it's (row, col), it's saved/read in transposed style
-		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
-		graph_parent = np.zeros((self.area_w, self.area_h), dtype=Vector)
+		p_graph = [ self.area_w, self.area_h, self.body ]
+		p_start = None
+		p_end = self.food
+		p_restrict = [ rect, self.aim ]
 
-		dist_adj = 2				# 调整间隙
-		h_weight = 1				# 预估成本权重
-
-		# 预估距离
-		dist = lambda a,b: abs(a.x-b.x) + abs(a.y-b.y)
-		# 成本评估
-		cost = lambda elem: graph[elem.x, elem.y] + h_weight * dist(elem, self.food)
-
-		# 如通过优先队列，则无需两层循环
-		pipe = [self.head]
-
-		# scan_graph
-		while len(pipe) > 0:
-			cost_ref = cost(pipe[0])
-			pipe_next = []
-
-			# make sure expand at least one elem in a cycle, or infinite loop
-			for elem in pipe:
-				if md_fast and elem == self.food:
-					break
-
-				# distance from head to the elem
-				dist_elem = graph[elem.x, elem.y]
-
-				if cost(elem) - cost_ref < dist_adj:
-					# neighbors of head
-					neighbors = [ elem + aim for aim in VECTORS() ]
-
-					if dist_elem == 0:
-						# the head, can not go backward directly
-						neighbors.remove(self.head - self.aim)
-						body_check = self.body[1:]
-					else:
-						# the tail have moved forward
-						body_check = self.body[:-dist_elem]
-
-					for nb in neighbors:
-						if rect.is_inside(nb) and nb not in body_check:
-							if graph[nb.x, nb.y] == 0:
-								graph[nb.x, nb.y] = dist_elem + 1
-								graph_parent[nb.x, nb.y] = elem
-								pipe_next.append(nb)
-				else:
-					pipe_next.append(elem)
-
-			pipe_next.sort(key=cost)
-			pipe = pipe_next
-
-		# graph_to_path
-		if graph[self.food.x, self.food.y]:
-			path = [self.food]
-			while path[0] != self.head:
-				parent = graph_parent[path[0].x, path[0].y]
-				path.insert(0, parent)
-		else:
-			path = []
-
-		self.graph = graph
-		self.path = path
-
-	def body_after_eat(self):
-		"""called right after graph scan and food is reachable"""
-
-		virt_length = self.length + 1
-		path_length = len(self.path)
-
-		# construct new body after eat food
-		virt_body = []
-
-		# both head and food is in the path
-		for i in range(min(virt_length, path_length)):
-			virt_body.append(self.path[-i-1])
-
-		# if virt_length <= path_length, will not enter loop
-		for i in range(virt_length - path_length):
-			virt_body.append(self.body[i+1])
-
-		return virt_body
+		return self.BFS(p_graph, p_start, p_end, p_restrict)
 
 	@count_func_time
-	def can_cycle_of_life(self, body):
-		""" check weather head can reach tailer for body
+	def scan_cycle_of_life(self, body=None):
+		""" scan path from head to tail for given body
 
-			BFS 终止条件，搜索首度进入原本的 body
+			parameter: None for current body
+			return: (path, graph)
 		"""
+		if body is None:
+			body = self.body
 
 		# bfs 搜索边界
 		rect = self.body_rect_with_border(body)
 
-		# if the dtype is uint, -graph[*] is still unsigned ..
-		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+		p_graph = [ self.area_w, self.area_h, body ]
+		p_start = None
+		p_end = None
+		p_restrict = [ rect, self.aim ]
 
-		pipe = [ body[0] ]
+		return self.BFS(p_graph, p_start, p_end, p_restrict)
 
-		while len(pipe) > 0:
-			elem = pipe.pop(0)
-
-			dist_elem = graph[elem.x, elem.y]
-
-			if dist_elem == 0:
-				body_check = body
-				body_safe = []
-			else:
-				body_check = body[:-dist_elem]
-				body_safe = body[-dist_elem:]
-
-			for nb in [ elem + vect for vect in VECTORS() ]:
-				if rect.is_inside(nb) and graph[nb.x, nb.y] == 0:
-					if nb in body_safe:
-						return True
-
-					if nb not in body_check:
-						graph[nb.x, nb.y] = dist_elem + 1
-						pipe.append(nb)
-
-		self.graph = graph
-		return False
+	def path_set_col(self):
+		pass
 
 	def path_set_wander(self):
 		""" 闲逛
@@ -376,7 +417,7 @@ class Snake:
 		if not is_safe(self.head + dir_v):
 			dir_v = -dir_v
 
-		for i in range(self.length//2):
+		for i in range(self.length//4):
 			for aim in (aim_cur, dir_v):
 				move_to = path[-1] + aim
 				if is_safe(move_to):

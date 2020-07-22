@@ -642,11 +642,17 @@ class SnakeApp(Gtk.Application):
 			1. graph is present(even all zero)
 			2. path is present(even empty)
 		"""
-		self.snake.scan_path_and_graph(self.data['sub_switch'])
+		self.snake.path, self.snake.graph = self.snake.scan_path_and_graph()
+
+		if len(self.snake.path) > 0:
+			new_body = self.snake.body_after_eat()
+			path, graph = self.snake.scan_cycle_of_life(new_body)
+			if len(path) == 0:
+				# not safe to eat food, show the graph after eat food
+				self.snake.graph = graph
 
 		# if food not reachable or can not eat food safely, set path for wander
-		if len(self.snake.path) == 0 or \
-				not self.snake.can_cycle_of_life(self.snake.body_after_eat()):
+		if len(self.snake.path) == 0 or len(path) == 0:
 			self.snake.path_set_wander()
 
 	#@count_func_time
@@ -699,6 +705,10 @@ class SnakeApp(Gtk.Application):
 		cr.rel_line_to(-lx + 2*r, 0)
 		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
 		cr.close_path()
+
+	def circle_mark(self, cr, x, y, lx, ly, r):
+		cr.arc(x+lx/2, y+ly/2, r, 0, 2*math.pi)
+		cr.stroke()
 
 	def cross_mark(self, cr, x, y, lx, ly, r):
 		cr.move_to(x+r, y+r)
@@ -814,12 +824,13 @@ class SnakeApp(Gtk.Application):
 		l = self.data['block_size']
 
 		# draw food
-		pix_sz = Vector(self.pix_food.get_width(), self.pix_food.get_height())
-		food = self.snake.food * l + Vector(l, l)/2 - pix_sz/2
-		Gdk.cairo_set_source_pixbuf(cr, self.pix_food, *food)
+		if self.snake.food:
+			pix_sz = Vector(self.pix_food.get_width(), self.pix_food.get_height())
+			food = self.snake.food * l + Vector(l, l)/2 - pix_sz/2
+			Gdk.cairo_set_source_pixbuf(cr, self.pix_food, *food)
 
-		cr.rectangle(*food, *pix_sz)
-		cr.fill()
+			cr.rectangle(*food, *pix_sz)
+			cr.fill()
 
 		# draw snake
 		rgba = Gdk.RGBA()
@@ -852,10 +863,16 @@ class SnakeApp(Gtk.Application):
 				cr.set_source_rgba(*rgba)
 			cr.fill()
 
+		# use background color
+		rgba.parse(self.data['bg_color'])
+		cr.set_source_rgba(*rgba)
+
 		if self.snake.is_died():
-			cr.set_source_rgba(1, 0, 0, 1)
 			cr.set_line_width(0.2)
 			self.cross_mark(cr, *self.snake.head, s, s, r)
+		else:
+			cr.set_line_width(0.12)
+			self.circle_mark(cr, *self.snake.head, s, s, s/4)
 
 		cr.restore()
 
