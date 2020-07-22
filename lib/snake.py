@@ -184,8 +184,10 @@ class Snake:
 		for elem in self.body:
 			snake_map[elem.x, elem.y] = False
 
+		# ATTENTION: thw new x,y is np.int64, convert to python int
+		# or json dump may failed with it
 		new_x,new_y = random.choice(np.transpose(snake_map.nonzero()))
-		return Vector(new_x, new_y)
+		return Vector(int(new_x), int(new_y))
 
 	def rect_border_body(self, with_food=True):
 		"""获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制"""
