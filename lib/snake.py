@@ -64,7 +64,7 @@ class Snake:
 
 		self.food = self.new_food()
 		self.graph = None
-		self.graph_path = None
+		self.path = None
 
 		# re-seed on reset
 		random.seed()
@@ -156,7 +156,7 @@ class Snake:
 		if self.head == self.food:
 			self.food = self.new_food()
 			self.graph = None
-			self.graph_path = None
+			self.path = None
 		else:
 			self.body.pop()
 
@@ -184,22 +184,30 @@ class Snake:
 				space_id -= 1
 
 	@count_func_time
-	def graph_scan(self, md_fast=True):
+	def scan_path_and_graph(self, md_fast=True):
 		"""best first search"""
-
-		dist = lambda a,b: abs(a.x-b.x) + abs(a.y-b.y)
-		dist_adj = 2
 
 		# in np, it's (row, col), it's saved/read in transposed style
 		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
+		graph_parent = np.zeros((self.area_w, self.area_h), dtype=Vector)
 
+		dist_adj = 2				# 调整间隙
+		h_weight = 1				# 预估成本权重
+
+		# 预估距离
+		dist = lambda a,b: abs(a.x-b.x) + abs(a.y-b.y)
+		# 成本评估
+		cost = lambda elem: graph[elem.x, elem.y] + h_weight * dist(elem, self.food)
+
+		# 如通过优先队列，则无需两层循环
 		pipe = [self.head]
 
+		# scan_graph
 		while len(pipe) > 0:
-
-			dist_ref = graph[pipe[0].x, pipe[0].y] + dist(pipe[0], self.food)
+			cost_ref = cost(pipe[0])
 			pipe_next = []
 
+			# make sure expand at least one elem in a cycle, or infinite loop
 			for elem in pipe:
 				if md_fast and elem == self.food:
 					break
@@ -207,7 +215,7 @@ class Snake:
 				# distance from head to the elem
 				dist_elem = graph[elem.x, elem.y]
 
-				if dist_elem + dist(elem, self.food) - dist_ref < dist_adj:
+				if cost(elem) - cost_ref < dist_adj:
 					# neighbors of head
 					neighbors = [ elem + aim for aim in VECTORS() ]
 
@@ -223,179 +231,145 @@ class Snake:
 						if self.is_inside(nb) and nb not in body_check:
 							if graph[nb.x, nb.y] == 0:
 								graph[nb.x, nb.y] = dist_elem + 1
+								graph_parent[nb.x, nb.y] = elem
 								pipe_next.append(nb)
 				else:
 					pipe_next.append(elem)
 
-			pipe_next.sort(key=lambda pos: graph[pos.x, pos.y] + dist(pos, self.food))
+			pipe_next.sort(key=cost)
 			pipe = pipe_next
 
+		# graph_to_path
+		if graph[self.food.x, self.food.y]:
+			path = [self.food]
+			while path[0] != self.head:
+				parent = graph_parent[path[0].x, path[0].y]
+				path.insert(0, parent)
+		else:
+			path = []
+
 		self.graph = graph
+		self.path = path
+
+	def body_after_eat(self):
+		"""called right after graph scan and food is reachable"""
+
+		virt_length = self.length + 1
+		path_length = len(self.path)
+
+		# construct new body after eat food
+		virt_body = []
+
+		# both head and food is in the path
+		for i in range(min(virt_length, path_length)):
+			virt_body.append(self.path[-i-1])
+
+		# if virt_length <= path_length, will not enter loop
+		for i in range(virt_length - path_length):
+			virt_body.append(self.body[i+1])
+
+		return virt_body
 
 	@count_func_time
-	def graph_scan_bfs(self, md_fast=True):
-		"""breadth first search"""
+	def can_cycle_of_life(self, body):
+		""" check weather head can reach tailer for body
 
-		# in np, it's (row, col), it's saved/read in transposed style
+			BFS 终止条件，搜索首度进入原本的 body
+		"""
+
+		# if the dtype is uint, -graph[*] is still unsigned ..
 		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
-		pipe = [self.head]
+
+		pipe = [ body[0] ]
 
 		while len(pipe) > 0:
 			elem = pipe.pop(0)
 
-			"""with md_fast False, it's possible to reach food not currently connected"""
-			if md_fast and elem == self.food:
-				break
-
-			# distance from head to the elem
 			dist_elem = graph[elem.x, elem.y]
 
-			# neighbors of head
-			neighbors = [ elem + aim for aim in VECTORS() ]
-
 			if dist_elem == 0:
-				# the head, can not go backward directly
-				neighbors.remove(self.head - self.aim)
-				body_check = self.body[1:]
+				body_check = body
+				body_safe = []
 			else:
-				# the tail have moved forward
-				body_check = self.body[:-dist_elem]
+				body_check = body[:-dist_elem]
+				body_safe = body[-dist_elem:]
 
-			for nb in random_seq(neighbors):
-				if self.is_inside(nb) and nb not in body_check:
-					if graph[nb.x, nb.y] == 0:
-						"""
-						with condition `raph[nb.x, nb.y] > dist_elem+1`,
-						this will reverse update the filled path which will
-						make the graph accurate to reflect the distance,
-						but useless for path search
-						"""
+			for nb in [ elem + vect for vect in VECTORS() ]:
+				if self.is_inside(nb) and graph[nb.x, nb.y] == 0:
+					if nb in body_safe:
+						return True
+
+					if nb not in body_check:
 						graph[nb.x, nb.y] = dist_elem + 1
-						# add to pipe
 						pipe.append(nb)
 
 		self.graph = graph
+		return False
 
-	#@count_func_time
-	def graph_path_scan(self, dest, md_rev=True):
-		if self.graph[dest.x, dest.y] == 0:
-			"""food not reacheable, begin survive mode"""
-			path = self.graph_path_survive(self.graph, self.head, dest)
-		else:
-			"""
-			attention for start:
-				if it's snake's head, the original graph[head] is likely to be
-				the length+1, which is decided by the graph scan logic, this
-				may be useful for survive mode, but do no help to reach food,
-				and cause trouble for path search, just override here
-			"""
-			self.graph[self.head.x, self.head.y] = 0
+	def path_set_wander(self):
+		""" 闲逛
 
-			if md_rev:
-				path = self.graph_path_gen_rev(self.graph, self.head, dest)
-			else:
-				path = self.graph_path_dfs(self.graph, self.head, dest)
+			草履虫模式：遇到障碍反向：反向意味接连转向
 
-		# keep only current path
-		for i in range(len(path)):
-			path[i] = path[i][0]
+			基本策略：
+			1. 折叠前进
+				总体前进方向：与初始方向垂直
+			2. 单侧预留逃生通道，另一侧可填满
+				逃生通道侧：初始方向的反向
+			3. 闲逛路径长度：1/4 body 长度
 
-		self.graph_path = path
-
-	def graph_path_dfs(self, graph, start, end):
-		"""正向深度搜索，无优化
-		大范围 DFS 时间复杂度与路径深度呈指数关系
+			实现：
+			1. 保持方向
+			2. 保持方向的终点判断
+			3. 转向后再次转向
 		"""
-		# the stack
-		path = [[start]]
+		# todo
 
-		while len(path) > 0:
-			elem = path[-1][0]
+		is_safe = lambda x: self.is_inside(x) and x not in self.body
 
-			if elem == end:
-				break
+		path = [self.head]
 
-			nbs = []
-			for nb in random_seq([ elem + aim for aim in VECTORS() ]):
-				# if can move forward to the neighbor, add to nbs
-				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]+1:
-					nbs.append(nb)
+		aim_cur = self.aim
+		dir_v = self.aim.T
+		if not is_safe(self.head + dir_v):
+			dir_v = -dir_v
 
-			if len(nbs) > 0 and graph[elem.x, elem.y] < graph[end.x, end.y]:
-				path.append(nbs)
-			else:			# the path is died or beyond end
-				# revert to last branch
-				while len(path) > 0 and len(path[-1]) == 1:
-					path.pop()
-
-				# remove current choice from the branch
-				if len(path) > 0:
-					path[-1].pop(0)
-
-		return path
-
-	def graph_path_gen_rev(self, graph, start, end):
-		"""反向搜索，利用已有信息，提高效率"""
-		# the stack
-		path = [[end]]
-
-		while len(path) > 0:
-			elem = path[0][0]
-
-			# there should be only one path from start to end with the generated graph
-			if graph[elem.x, elem.y] == graph[start.x, start.y] + 1:
-				path.insert(0, [start])
-				break
-
-			# try to keep path straight
-			if len(path) > 1:
-				aim = path[0][0] - path[1][0]
-				choices = [ elem + aim for aim in (aim, aim.T, -aim.T) ]
-			else:
-				choices = random_seq([ elem + aim for aim in VECTORS() ])
-
-			for nb in choices:
-				# if can move forward to the neighbor, add to nbs
-				if self.is_inside(nb) and graph[nb.x, nb.y] == graph[elem.x, elem.y]-1:
-					path.insert(0, [nb])
+		for i in range(self.length//2):
+			for aim in (aim_cur, dir_v):
+				move_to = path[-1] + aim
+				if is_safe(move_to):
+					path.append(move_to)
 					break
-			else: # unexpected case
-				raise Warning('UNEXPECTED CASE')
+			else:	# no valid path
+				break
 
-		return path
+			if aim == dir_v:
+				aim_cur = -aim_cur
 
-	def graph_aim_deadend(self, graph, start, aim):
-		pos = start + aim
-
-		visit_map = np.zeros((self.area_w, self.area_h), dtype=np.int32)
-		graph = np.zeros((self.area_w, self.area_h), dtype=np.int32)
-
-		pipe = [(pos, None)]
-
-		while len(pipe) > 0:
-			elem = pipe.pop(0)
-			visit_map[elem.x, elem.y] = True
+		if len(path) > 1:
+			self.path = path
 
 
-		return True
-
-	def graph_path_survive(self, graph, start, end):
-		path = []
-		return path
-
-
-	def get_aim_graph(self):
+	def get_aim_path(self):
 		""" just follow current graph path
 
+			the path has at least two element
+
+			keep direction on exit path
 			return None if path not valid or head not in path
 		"""
 		try:
 			# find current head in path
-			next_id = self.graph_path.index(self.head) + 1
+			next_id = self.path.index(self.head) + 1
 		except:
 			return None
 
-		return self.graph_path[next_id] - self.head
+		if next_id < len(self.path):
+			return self.path[next_id] - self.head
+		else:
+			# reach the end of path (for path from wander)
+			# keep aim for the step to exit path
+			return self.path[-1] - self.path[-2]
 
 	def get_aim_greedy(self, md_diag=True):
 		pd_cross = self.aim.pd_cross(self.vec_head2food)
@@ -434,7 +408,7 @@ class Snake:
 		"""
 
 		if mode == AutoMode.GRAPH:
-			aim_next = self.get_aim_graph()
+			aim_next = self.get_aim_path()
 
 		elif mode == AutoMode.GREEDY:
 			aim_next = self.get_aim_greedy(md_sub)

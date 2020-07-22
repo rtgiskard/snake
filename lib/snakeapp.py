@@ -366,7 +366,7 @@ class SnakeApp(Gtk.Application):
 				if self.load_data(json.load(fd)):
 					return True
 
-		# todo: pop dialog for failed operation
+		# pop dialog for failed operation
 		self.show_warning_dialog('Failed to {} game'.format(text))
 
 		return False
@@ -482,7 +482,7 @@ class SnakeApp(Gtk.Application):
 			scale_y = area_lim[1]/area[1]
 
 		# use the smaller scale
-		scale = scale_x if scale_x < scale_y else scale_y
+		scale = min(scale_x, scale_y)
 		self.data['block_area_scale'] = scale
 
 		if self.snake.area_w != area_w or self.snake.area_h != area_h:
@@ -642,8 +642,12 @@ class SnakeApp(Gtk.Application):
 			1. graph is present(even all zero)
 			2. path is present(even empty)
 		"""
-		self.snake.graph_scan(self.data['sub_switch'])
-		self.snake.graph_path_scan(self.snake.food)
+		self.snake.scan_path_and_graph(self.data['sub_switch'])
+
+		# if food not reachable or can not eat food safely, set path for wander
+		if len(self.snake.path) == 0 or \
+				not self.snake.can_cycle_of_life(self.snake.body_after_eat()):
+			self.snake.path_set_wander()
 
 	#@count_func_time
 	def check_update_after_move(self):
@@ -651,7 +655,7 @@ class SnakeApp(Gtk.Application):
 		what and when to update:
 		1. the graph
 			1.1 eat food
-			1.2 off-path:
+			1.2 off-path: head not in path
 			1.3 force update
 		2. the graph path
 			2.1 after graph update
@@ -659,7 +663,7 @@ class SnakeApp(Gtk.Application):
 		# if in graph-auto mode
 		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
 			# if eat food on move, or off-path
-			if self.snake.graph is None or self.snake.head not in self.snake.graph_path:
+			if self.snake.graph is None or self.snake.head not in self.snake.path:
 				self.update_snake_graph()
 
 	#@count_func_time
@@ -727,10 +731,10 @@ class SnakeApp(Gtk.Application):
 		cr.move_to((area_w - extent_reset.width)/2, (area_h - extent_reset.height + extent_go.height)/2)
 		cr.show_text(text_reset)
 
-	def draw_snake_graph_path(self, cr):
+	def draw_snake_path(self, cr):
 		# graph path exist and not empty
-		if self.snake.graph_path is None or len(self.snake.graph_path) == 0:
-				return False
+		if self.snake.path is None or len(self.snake.path) == 0:
+			return False
 
 		l = self.data['block_size']
 
@@ -740,8 +744,8 @@ class SnakeApp(Gtk.Application):
 
 		cr.transform(cairo.Matrix(l, 0, 0, l, l/2, l/2))
 
-		cr.move_to(*self.snake.graph_path[0])
-		for pos in self.snake.graph_path[1:]:
+		cr.move_to(*self.snake.path[0])
+		for pos in self.snake.path[1:]:
 			cr.line_to(*pos)
 
 		cr.stroke()
@@ -860,7 +864,7 @@ class SnakeApp(Gtk.Application):
 
 		if self.data['show_graph']:
 			self.draw_snake_graph(cr)
-			self.draw_snake_graph_path(cr)
+			self.draw_snake_path(cr)
 
 	def do_startup(self):
 		Gtk.Application.do_startup(self)
