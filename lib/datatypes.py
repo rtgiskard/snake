@@ -102,4 +102,21 @@ class Rect:
 		elif node.y > self.y1:
 			self.y1 = node.y
 
+class Color_Grad:
+	def __init__(self, n=None):
+		self._n = n
+
+	def __getitem__(self, index):
+		if index < 0 or index >= self._n:
+			raise IndexError("color index out of range")
+		else:
+			ix = index/self._n
+
+		if   ix < 1/6:	x = 6*ix-0; return (0,1,x,1)
+		elif ix < 2/6:	x = 2-6*ix; return (0,x,1,1)
+		elif ix < 3/6:	x = 6*ix-2; return (x,0,1,1)
+		elif ix < 4/6:	x = 4-6*ix; return (1,0,x,1)
+		elif ix < 5/6:	x = 6*ix-4; return (1,x,0,1)
+		else:			x = 6-6*ix; return (x,1,0,1)
+
 # vi: set ts=4 noexpandtab foldmethod=indent :

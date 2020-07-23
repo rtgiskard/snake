@@ -12,19 +12,45 @@ from gi.repository import Gio, Gtk, Gdk, GLib
 from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 import cairo
 
-from .datatypes import Vector
+from .datatypes import *
 from .decorator import *
 from .dataref import *
 from .functions import *
 from .snake import Snake
+
 from . import NAME, VERSION, AUTHOR, COPYRIGHT, LICENSE_TYPE
 
+
+class Draw_Pack:
+	def __init__(self, cr=None):
+		self.cr = cr
+
+	def rect_round(self, x, y, lx, ly, r):
+		self.cr.move_to(x, y+r)
+		self.cr.arc(x + r, y + r, r, math.pi, -math.pi/2)
+		self.cr.rel_line_to(lx - 2*r, 0)
+		self.cr.arc(x + lx - r, y + r, r, -math.pi/2, 0)
+		self.cr.rel_line_to(0, ly - 2*r)
+		self.cr.arc(x + lx - r, y + ly - r, r, 0, math.pi/2)
+		self.cr.rel_line_to(-lx + 2*r, 0)
+		self.cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
+		self.cr.close_path()
+
+	def circle_mark(self, x, y, lx, ly, r):
+		self.cr.arc(x+lx/2, y+ly/2, r, 0, 2*math.pi)
+		self.cr.stroke()
+
+	def cross_mark(self, x, y, lx, ly, r):
+		self.cr.move_to(x+r, y+r)
+		self.cr.line_to(x+lx-r, y+ly-r)
+		self.cr.move_to(x+lx-r, y+r)
+		self.cr.line_to(x+r, y+ly-r)
+		self.cr.stroke()
 
 class Handler:
 	@classmethod
 	def on_draw(cls, widget, cr, app):
-		app.draw_init(cr)
-		app.draw_snake(cr)
+		app.update_draw(cr)
 
 		# stop event pass on
 		return True
@@ -145,14 +171,32 @@ class Handler:
 
 		# now handel all keyboard event here, without pass on
 
+		# debug related keyshot
 		if KEY_PRESS and keyname == 'h':
 			app.panel.set_visible(not app.panel.get_visible())
 
-		if app.snake.is_died():
+		elif KEY_PRESS and keyname == 't':
+			app.data['show_trace'] = not app.data['show_trace']
+			app.draw.queue_draw()
+
+		elif KEY_PRESS and keyname == 'g':
+			if KeyName == 'G':
+				if not app.dpack.died:
+					# scan only on alive
+					app.snake.update_paths_and_graph()
+				app.data['show_graph'] = True
+			else:
+				app.data['show_graph'] = not app.data['show_graph']
+
+			app.draw.queue_draw()
+
+		if app.dpack.died:
 			if KEY_PRESS and keyname == 'r':
 				app.reset_game()
 
 			return True
+
+		# forbid player mode related keyshot after died
 
 		if keyname in [ 'up', 'down', 'left', 'right' ]:
 			if KEY_PRESS:
@@ -175,15 +219,6 @@ class Handler:
 			app.bt_speed.spin(Gtk.SpinType.STEP_BACKWARD, 1)
 		elif KEY_PRESS and keyname == 'bracketright':
 			app.bt_speed.spin(Gtk.SpinType.STEP_FORWARD, 1)
-
-		elif KEY_PRESS and keyname == 'g':
-			if KeyName == 'G':
-				app.snake.update_paths_and_graph()
-				app.data['show_graph'] = True
-			else:
-				app.data['show_graph'] = not app.data['show_graph']
-
-			app.draw.queue_draw()
 
 		elif KEY_PRESS and keyname == 's':
 			app.data['sub_switch'] = not app.data['sub_switch']
@@ -210,7 +245,6 @@ class SnakeApp(Gtk.Application):
 				'block_size': 16,
 				'block_area': {'width':40, 'height':28},
 				'block_area_limit': {'min':10, 'max':999},
-				'block_area_margin': 10,
 				'block_area_scale': 1,
 				'block_area_list': ( '{0}x{0}'.format(i*20) for i in range(1, 11) ),
 				'bg_color': 'black',
@@ -228,6 +262,7 @@ class SnakeApp(Gtk.Application):
 				'auto_mode': AutoMode.GRAPH,
 				'sub_switch': True,
 				'show_graph': False,
+				'show_trace': False,
 				}
 
 		# 注意绘图座标系正负与窗口上下左右的关系
@@ -240,6 +275,9 @@ class SnakeApp(Gtk.Application):
 
 		self.snake = Snake(self.data['block_area']['width'], self.data['block_area']['height'])
 		self.snake_aim_buf = None
+
+		# for share of draw parameters
+		self.dpack = Draw_Pack()
 
 		self.timeout_id = None
 		self.about_dialog = None
@@ -266,6 +304,7 @@ class SnakeApp(Gtk.Application):
 			self.data['auto_mode'] = AutoMode.GRAPH
 			self.data['sub_switch'] = True
 			self.data['show_graph'] = False
+			self.data['show_trace'] = False
 			self.data['fg_color'] = 'grey'
 			self.data['bg_color'] = 'black'
 			self.data['speed'] = 8
@@ -408,6 +447,8 @@ class SnakeApp(Gtk.Application):
 		return True
 
 	def init_state_from_data(self):
+		"""called on init_ui, reset, load game"""
+
 		# reset bt_speed
 		self.bt_speed.set_value(self.data['speed'])
 
@@ -460,11 +501,58 @@ class SnakeApp(Gtk.Application):
 		else:
 			return '<big><b>{}</b></big>/<small>{}</small>'.format(lstr, rstr)
 
+	def init_draw_pack(self):
+		dp = self.dpack
+
+		# dynamic value: the draw widget size
+		dp.wd_w = lambda: self.draw.get_allocated_width()
+		dp.wd_h = lambda: self.draw.get_allocated_height()
+
+		# snake area size
+		dp.area_w = self.data['block_area']['width']
+		dp.area_h = self.data['block_area']['height']
+
+		dp.scale = self.data['block_area_scale']
+
+		dp.l = self.data['block_size']	# block grid side length, in pixel
+		dp.s = 0.9						# body block side length, relative to dp.l
+		dp.r = 0.2						# body block corner radius, relative to dp.l
+
+		dp.fn = 'monospace'				# text font name
+		dp.fs = 0.7						# dist map font size, relative to dp.l
+
+		# snake alive cache
+		dp.died = self.snake.is_died()
+
+		# color
+		rgba = Gdk.RGBA()			# free rgba
+
+		rgba.parse(self.data['bg_color'])
+		dp.rgba_bg = tuple(rgba)
+		rgba.parse(self.data['fg_color'])
+		dp.rgba_fg = tuple(rgba)
+
+		dp.rgba_mark = (*dp.rgba_bg[:3], 0.8)	# mark: use bg color, but set alpha to 0.8
+		dp.rgba_trace = (*dp.rgba_bg[:3], 0.4)	# trace: use bg color, but set alpha to 0.4
+		dp.rgba_path = (0, 1, 1, 0.6)			# path
+		dp.rgba_text = (0, 1, 0, 0.8)			# text for dist map
+		dp.rgba_over = (1, 0, 1, 0.8)			# game over text
+		dp.rgba_edge = (0,0,1,1)				# edge: blue
+		dp.rgba_black = (0,0,0,1)				# black reference
+
+		# fg == bg == black: colorful
+		if (dp.rgba_bg == dp.rgba_fg == dp.rgba_black):
+			# the color gradient rely on snake's dynamic length
+			dp.body_color = lambda i: Color_Grad(self.snake.length)[i]
+		else:
+			dp.body_color = lambda i: dp.rgba_fg
+
 	def req_draw_size_mini(self):
+		"""call on window resized or init_state_from_data"""
+
 		blk_sz = self.data['block_size']
 		area_w = self.data['block_area']['width']
 		area_h = self.data['block_area']['height']
-		margin = self.data['block_area_margin']
 
 		# get current monitor resolution
 		display = Gdk.Display.get_default()
@@ -472,14 +560,10 @@ class SnakeApp(Gtk.Application):
 		rect = Gdk.Monitor.get_geometry(monitor)
 
 		area_lim = (int(rect.width * 0.9), int(rect.height * 0.9))
-		area = [ blk_sz * area_w + 2 * margin, blk_sz * area_h + 2 * margin ]
+		area = [ blk_sz * (area_w + 2), blk_sz * (area_h + 2) ]
 
-		scale_x, scale_y = (1, 1)
-		if area[0] > area_lim[0]:
-			scale_x = area_lim[0]/area[0]
-
-		if area[1] > area_lim[1]:
-			scale_y = area_lim[1]/area[1]
+		scale_x = min(area[0], area_lim[0])/area[0]
+		scale_y = min(area[1], area_lim[1])/area[1]
 
 		# use the smaller scale
 		scale = min(scale_x, scale_y)
@@ -488,6 +572,9 @@ class SnakeApp(Gtk.Application):
 		if self.snake.area_w != area_w or self.snake.area_h != area_h:
 			# snake resize && reset is not match
 			self.snake.area_resize(area_w, area_h, True)
+
+		# init/sync draw pack
+		self.init_draw_pack()
 
 		# request for mini size
 		self.draw.set_size_request(area[0] * scale, area[1] * scale)
@@ -501,6 +588,8 @@ class SnakeApp(Gtk.Application):
 				self.data['fg_color'] = widget.get_rgba().to_string()
 			elif widget is self.color_bg:
 				self.data['bg_color'] = widget.get_rgba().to_string()
+
+		self.init_draw_pack()
 
 	def set_color(self, *widgets):
 		rgba = Gdk.RGBA()
@@ -670,90 +759,153 @@ class SnakeApp(Gtk.Application):
 			self.lb_length.set_text('{}'.format(self.snake.length))
 			self.check_update_after_move()
 		else:
+			self.dpack.died = True
 			self.timeout_id = None
 			self.tg_run.set_sensitive(False)
 			print('game over, died')
 
 		self.draw.queue_draw()
 
-	def rect_round(self, cr, x, y, lx, ly, r):
-		cr.move_to(x, y+r)
-		cr.arc(x + r, y + r, r, math.pi, -math.pi/2)
-		cr.rel_line_to(lx - 2*r, 0)
-		cr.arc(x + lx - r, y + r, r, -math.pi/2, 0)
-		cr.rel_line_to(0, ly - 2*r)
-		cr.arc(x + lx - r, y + ly - r, r, 0, math.pi/2)
-		cr.rel_line_to(-lx + 2*r, 0)
-		cr.arc(x + r, y + ly - r, r, math.pi/2, math.pi)
+	## Draw related ##
+
+	#@count_func_time
+	def update_draw(self, cr):
+		"""op pack for update draw"""
+
+		dp = self.dpack
+		dp.cr = cr
+
+		self.draw_init(dp)
+		self.draw_snake(dp)
+
+	def draw_init(self, dp):
+		cr = dp.cr
+
+		context = self.draw.get_style_context()
+		Gtk.render_background(context, cr, 0, 0, dp.wd_w(), dp.wd_h())
+
+		# draw background
+		cr.set_source_rgba(*dp.rgba_bg)
+		cr.rectangle(0,0, dp.wd_w(), dp.wd_h())
+		cr.fill()
+
+		# make sure center is center
+		translate = (
+				(dp.wd_w() - dp.scale * dp.l * dp.area_w)/2,
+				(dp.wd_h() - dp.scale * dp.l * dp.area_h)/2
+				)
+		cr.transform(cairo.Matrix(dp.scale, 0, 0, dp.scale, *translate))
+
+		cr.set_line_join(cairo.LINE_JOIN_ROUND)
+		cr.set_tolerance(0.1)
+
+		cr.save()
+		cr.scale(dp.l, dp.l)
+
+		# draw the edge
+		cr.move_to(0, 0)
+		cr.rel_line_to(0, dp.area_h)
+		cr.rel_line_to(dp.area_w, 0)
+		cr.rel_line_to(0, -dp.area_h)
 		cr.close_path()
 
-	def circle_mark(self, cr, x, y, lx, ly, r):
-		cr.arc(x+lx/2, y+ly/2, r, 0, 2*math.pi)
+		cr.set_source_rgba(*dp.rgba_edge)
+		cr.set_line_width(0.1)
 		cr.stroke()
+		cr.restore()
 
-	def cross_mark(self, cr, x, y, lx, ly, r):
-		cr.move_to(x+r, y+r)
-		cr.line_to(x+lx-r, y+ly-r)
-		cr.move_to(x+lx-r, y+r)
-		cr.line_to(x+r, y+ly-r)
+	def draw_snake(self, dp):
+		cr = dp.cr
+
+		# food
+		if self.snake.food:
+			pix_sz = Vector(self.pix_food.get_width(), self.pix_food.get_height())
+			food = self.snake.food * dp.l + (Vector(dp.l, dp.l) - pix_sz)/2
+			Gdk.cairo_set_source_pixbuf(cr, self.pix_food, *food)
+
+			cr.rectangle(*food, *pix_sz)
+			cr.fill()
+
+		cr.save()
+
+		# aligned to grid center
+		xy_offset = (1-dp.s)*dp.l/2
+		cr.transform(cairo.Matrix(dp.l, 0, 0, dp.l, xy_offset, xy_offset))
+
+		# snake body
+		for i in range(self.snake.length):
+			dp.rect_round(*self.snake.body[i], dp.s, dp.s, dp.r)
+			cr.set_source_rgba(*dp.body_color(i))
+			cr.fill()
+
+		# head mark
+		cr.set_source_rgba(*dp.rgba_mark)
+
+		if dp.died:
+			cr.set_line_width(0.2)
+			dp.cross_mark(*self.snake.head, dp.s, dp.s, dp.r)
+		else:
+			cr.set_line_width(0.12)
+			dp.circle_mark(*self.snake.head, dp.s, dp.s, dp.s/4)
+
+		cr.restore()
+
+		if self.data['show_trace']:
+			self.draw_snake_trace(dp)
+
+		if self.data['show_graph']:
+			self.draw_snake_graph(dp)
+			self.draw_snake_path(dp)
+
+		if dp.died:
+			self.draw_gameover(dp)
+
+	def draw_snake_trace(self, dp):
+		cr = dp.cr
+
+		cr.save()
+		cr.transform(cairo.Matrix(dp.l, 0, 0, dp.l, dp.l/2, dp.l/2))
+
+		cr.move_to(*self.snake.body[0])
+		for pos in self.snake.body[1:]:
+			cr.line_to(*pos)
+
+		cr.set_source_rgba(*dp.rgba_trace)
+		cr.set_line_width(0.1)
 		cr.stroke()
+		cr.restore()
 
-	def draw_gameover(self, cr):
-		# relative to the snake window, attention to the transform before
-		area_w = self.data['block_size'] * self.data['block_area']['width']
-		area_h = self.data['block_size'] * self.data['block_area']['height']
-
-		text_go = 'GAME OVER'
-		text_reset = 'Press "r" to reset'
-
-		cr.set_source_rgba(1, 0, 1, 0.8)
-		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-
-		cr.set_font_size(48)
-		extent_go = cr.text_extents(text_go)
-
-		# litte above center
-		cr.move_to((area_w - extent_go.width)/2, (area_h - extent_go.height)/2)
-		cr.show_text(text_go)
-
-		cr.set_font_size(20)
-		extent_reset = cr.text_extents(text_reset)
-
-		cr.move_to((area_w - extent_reset.width)/2, (area_h - extent_reset.height + extent_go.height)/2)
-		cr.show_text(text_reset)
-
-	def draw_snake_path(self, cr):
+	def draw_snake_path(self, dp):
 		# graph path exist and not empty
 		if self.snake.path is None or len(self.snake.path) == 0:
 			return False
 
-		l = self.data['block_size']
+		cr = dp.cr
 
 		cr.save()
-		cr.set_source_rgba(0, 1, 1, 0.5)
-		cr.set_line_width(0.2)
-
-		cr.transform(cairo.Matrix(l, 0, 0, l, l/2, l/2))
+		cr.transform(cairo.Matrix(dp.l, 0, 0, dp.l, dp.l/2, dp.l/2))
 
 		cr.move_to(*self.snake.path[0])
 		for pos in self.snake.path[1:]:
 			cr.line_to(*pos)
 
+		cr.set_source_rgba(*dp.rgba_path)
+		cr.set_line_width(0.2)
 		cr.stroke()
 		cr.restore()
 
-	def draw_snake_graph(self, cr):
+	def draw_snake_graph(self, dp):
 		if self.snake.graph is None:
 			return False
 
-		l = self.data['block_size']
+		cr = dp.cr
 
 		cr.save()
-		cr.set_source_rgba(0, 1, 0, 0.8)
-		cr.select_font_face('Serif', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-		cr.set_font_size(0.7)
+		cr.transform(cairo.Matrix(dp.l, 0, 0, dp.l, dp.l/2, dp.l/2))
 
-		cr.transform(cairo.Matrix(l, 0, 0, l, l/2, l/2))
+		cr.set_source_rgba(*dp.rgba_text)
+		cr.select_font_face(dp.fn, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+		cr.set_font_size(dp.fs)
 
 		for x,y in np.transpose(self.snake.graph.nonzero()):
 			dist = self.snake.graph[x, y]
@@ -763,106 +915,31 @@ class SnakeApp(Gtk.Application):
 
 		cr.restore()
 
-	def draw_init(self, cr):
-		width = self.draw.get_allocated_width()
-		height = self.draw.get_allocated_height()
+	def draw_gameover(self, dp):
+		cr = dp.cr
 
-		area_w = self.data['block_size'] * self.data['block_area']['width']
-		area_h = self.data['block_size'] * self.data['block_area']['height']
+		text_go = 'GAME OVER'
+		text_reset = 'Press "r" to reset'
 
-		context = self.draw.get_style_context()
-		Gtk.render_background(context, cr, 0, 0, width, height)
+		cr.set_source_rgba(*dp.rgba_over)
+		cr.select_font_face(dp.fn, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
 
-		# draw background
-		rgba = Gdk.RGBA()
-		rgba.parse(self.data['bg_color'])
-		cr.set_source_rgba(*rgba)
-		cr.rectangle(0,0, width, height)
-		cr.fill()
+		cr.set_font_size(48)
+		extent_go = cr.text_extents(text_go)
 
-		# setup transformation
-		scale = self.data['block_area_scale']
-		# make sure center is center
-		translate = (width/2 - scale * area_w/2, height/2 - scale * area_h/2)
+		# litte above center
+		cr.move_to((dp.l * dp.area_w - extent_go.width)/2,
+				(dp.l * dp.area_h - extent_go.height)/2)
+		cr.show_text(text_go)
 
-		cr.transform(cairo.Matrix(scale, 0, 0, scale, *translate))
+		cr.set_font_size(20)
+		extent_reset = cr.text_extents(text_reset)
 
-		# draw the edge
-		cr.move_to(0, 0)
-		cr.rel_line_to(0, area_h)
-		cr.rel_line_to(area_w, 0)
-		cr.rel_line_to(0, -area_h)
-		cr.close_path()
+		cr.move_to((dp.l * dp.area_w - extent_reset.width)/2,
+				(dp.l * dp.area_h - extent_reset.height + extent_go.height)/2)
+		cr.show_text(text_reset)
 
-		rgba.parse('blue')
-		cr.set_source_rgba(*rgba)
-		cr.set_line_width(self.data['block_size']/10)
-		cr.set_line_join(cairo.LINE_JOIN_ROUND)
-		cr.set_tolerance(0.1)
-		cr.stroke()
-
-	def draw_snake(self, cr):
-		l = self.data['block_size']
-
-		# draw food
-		if self.snake.food:
-			pix_sz = Vector(self.pix_food.get_width(), self.pix_food.get_height())
-			food = self.snake.food * l + Vector(l, l)/2 - pix_sz/2
-			Gdk.cairo_set_source_pixbuf(cr, self.pix_food, *food)
-
-			cr.rectangle(*food, *pix_sz)
-			cr.fill()
-
-		# draw snake
-		rgba = Gdk.RGBA()
-		rgba.parse('black')
-		cstr_00 = rgba.to_string()
-		rgba.parse(self.data['bg_color'])
-		cstr_bg = rgba.to_string()
-		rgba.parse(self.data['fg_color'])
-		cstr_fg = rgba.to_string()
-
-		colorful = (cstr_fg == cstr_bg == cstr_00)
-
-		if colorful:
-			color = color_pool(self.snake.length)
-		else:
-			cr.set_source_rgba(*rgba)
-
-		# scale the body block and center it in the grid
-		s, r = (0.9, 0.2)
-		xy_offset = (1-s)*l/2
-
-		cr.save()
-		# aligned to grid center
-		cr.transform(cairo.Matrix(l, 0, 0, l, xy_offset, xy_offset))
-
-		for block in self.snake.body:
-			self.rect_round(cr, *block, s, s, r)
-			if colorful:
-				rgba.parse(color.__next__())
-				cr.set_source_rgba(*rgba)
-			cr.fill()
-
-		# use background color
-		rgba.parse(self.data['bg_color'])
-		cr.set_source_rgba(*rgba)
-
-		if self.snake.is_died():
-			cr.set_line_width(0.2)
-			self.cross_mark(cr, *self.snake.head, s, s, r)
-		else:
-			cr.set_line_width(0.12)
-			self.circle_mark(cr, *self.snake.head, s, s, s/4)
-
-		cr.restore()
-
-		if self.snake.is_died():
-			self.draw_gameover(cr)
-
-		if self.data['show_graph']:
-			self.draw_snake_graph(cr)
-			self.draw_snake_path(cr)
+	## App actions ##
 
 	def do_startup(self):
 		Gtk.Application.do_startup(self)
