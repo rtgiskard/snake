@@ -178,7 +178,7 @@ class Handler:
 
 		elif KEY_PRESS and keyname == 'g':
 			if KeyName == 'G':
-				app.update_snake_graph()
+				app.snake.update_paths_and_graph()
 				app.data['show_graph'] = True
 			else:
 				app.data['show_graph'] = not app.data['show_graph']
@@ -352,7 +352,7 @@ class SnakeApp(Gtk.Application):
 
 		filename = self.run_filechooser(is_save)
 
-		if not filename:
+		if filename is None:
 			return True
 
 		if is_save:
@@ -637,25 +637,6 @@ class SnakeApp(Gtk.Application):
 		self.window.set_focus(None)
 
 	#@count_func_time
-	def update_snake_graph(self):
-		""" after scan:
-			1. graph is present(even all zero)
-			2. path is present(even empty)
-		"""
-		self.snake.path, self.snake.graph = self.snake.scan_path_and_graph()
-
-		if len(self.snake.path) > 0:
-			new_body = self.snake.body_after_eat()
-			path, graph = self.snake.scan_cycle_of_life(new_body)
-			if len(path) == 0:
-				# not safe to eat food, show the graph after eat food
-				self.snake.graph = graph
-
-		# if food not reachable or can not eat food safely, set path for wander
-		if len(self.snake.path) == 0 or len(path) == 0:
-			self.snake.path_set_wander()
-
-	#@count_func_time
 	def check_update_after_move(self):
 		"""
 		what and when to update:
@@ -669,8 +650,8 @@ class SnakeApp(Gtk.Application):
 		# if in graph-auto mode
 		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
 			# if eat food on move, or off-path
-			if self.snake.graph is None or self.snake.head not in self.snake.path:
-				self.update_snake_graph()
+			if self.snake.path is None or self.snake.head not in self.snake.path:
+				self.snake.update_paths_and_graph()
 
 	#@count_func_time
 	def timer_move(self, data):
