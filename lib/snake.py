@@ -203,27 +203,38 @@ class Snake:
 		return Vector(int(new_x), int(new_y))
 
 
-	def body_after_eat(self):
-		"""called right after scan and food is reachable"""
+	def body_after_step_on_path(self, body, path, step):
+		""" called right after scan and food is reachable
 
-		virt_length = self.length + 1
-		path_length = len(self.path)
+			for better perspective, draw the path and body on paper
+		"""
 
-		# construct new body after eat food
-		virt_body = []
+		# body and path increase in different direction
+		assert body[0] == path[0]
+		assert len(path) > 1
+		assert step < len(path)
 
-		# both head and food is in the path
-		for i in range(min(virt_length, path_length)):
-			virt_body.append(self.path[-i-1])
+		# copy from path to new body
+		new_body = path[:step+1]
 
-		# if virt_length <= path_length, will not enter loop
-		for i in range(virt_length - path_length):
-			virt_body.append(self.body[i+1])
+		# the blocks left only on old body
+		body_step = len(body) - step - 1
 
-		return virt_body
+		# check weather append or pop to body
+		if body_step >= 0:
+			for i in range(body_step):
+				new_body.insert(0, body[i+1] )
+		else:
+			for i in range(-body_step):
+				new_body.pop(0)
+
+		# reverse inplace to get the real body
+		new_body.reverse()
+
+		return new_body
 
 	def body_rect_with_border(self, body, food=None):
-		"""获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制
+		""" 获取包围 body 最小矩形，并外扩一周，作为 bfs 边界限制
 
 			外扩一周后应足以囊括有效搜索区域
 		"""
@@ -252,22 +263,19 @@ class Snake:
 		return rect
 
 
-	def BFS(self, graph, start=None, end=None, restrict=None):
-		"""A* best first search
+	def BFS(self, graph, start=None, end=None):
+		""" A* best first search
 
 		parameters:
 			graph: a list of info to construct the graph
-				[ area_w, area_h, body ]
+				[ body, (area_w, area_h), (aim_0, rect) ]
+					(area_w, area_h): area size
+					(aim_0, rect): (initial aim, search only in rect)
 			start: the search start point and related info
 				None: default to body[0]
 				for dynamic body on move, it should be body[0]
 			end: the point where search can stop
 				None for circle of life
-			restrict: list of restrictions for the search
-				[ rect, aim ]
-
-				rect: 优化的搜索边界
-				aim: 初始方向
 
 		return:
 			(path, graph)
@@ -276,11 +284,13 @@ class Snake:
 			graph: a map for distance of node, an array even all zero
 		"""
 		# parse parameters
-		array_dim = graph[:2]
-		body = graph[-1]
-		rect, aim_0 = restrict
+		body = graph[0]
+		array_dim = graph[1]
+		aim_0, rect = graph[2]
 
-		# start should be body[0]
+		# currently start must be body[0]
+		assert start is None
+
 		if start is None:
 			start = body[0]
 
@@ -323,7 +333,6 @@ class Snake:
 
 			"""
 			to get a straight path, the neighbors' sequence should be fixed.
-			prefer nb on forward
 			"""
 			aim = map_aim[elem.x, elem.y]
 			# neighbors of head, todo: random turn?
@@ -356,26 +365,31 @@ class Snake:
 		return (path, map_dist)
 
 	@count_func_time
-	def scan_path_and_graph(self):
-		"""best first search"""
+	def scan_path_and_graph(self, body=None, target=None):
+		""" scan path for head to target for given body """
+
+		if body is None:
+			body = self.body
+
+		if target is None:
+			target = self.food
 
 		# bfs 搜索边界
-		rect = self.body_rect_with_border(self.body, self.food)
+		rect = self.body_rect_with_border(body, target)
 
-		p_graph = [ self.area_w, self.area_h, self.body ]
+		p_graph = [ body, (self.area_w, self.area_h), (self.aim, rect) ]
 		p_start = None
-		p_end = self.food
-		p_restrict = [ rect, self.aim ]
+		p_end = target
 
-		return self.BFS(p_graph, p_start, p_end, p_restrict)
+		return self.BFS(p_graph, p_start, p_end)
 
 	@count_func_time
 	def scan_cycle_of_life(self, body=None):
-		""" scan path from head to tail for given body
+		""" scan path for head to tail for given body
 
 			col path:
 				1, start == body[0], end in body
-				2. elem between not in body
+				2. any elem in between is not in body
 					as it's the shortest path to form the cycle
 				3. self.path_col is only set/reset after eat food safely or follow COL
 
@@ -388,14 +402,16 @@ class Snake:
 		# bfs 搜索边界
 		rect = self.body_rect_with_border(body)
 
-		p_graph = [ self.area_w, self.area_h, body ]
+		p_graph = [ body, (self.area_w, self.area_h), (self.aim, rect) ]
 		p_start = None
 		p_end = None
-		p_restrict = [ rect, self.aim ]
 
-		return self.BFS(p_graph, p_start, p_end, p_restrict)
+		return self.BFS(p_graph, p_start, p_end)
 
-	def path_set_wander(self, length=None):
+	def scan_path_wander(self, body=None):
+		pass
+
+	def path_set_wander(self, steps=None):
 		""" 闲逛
 
 			草履虫模式：遇到障碍反向：反向意味接连转向
@@ -420,10 +436,10 @@ class Snake:
 
 			预留通道：aim 方向预留 1~2 个空格
 		"""
-		# 默认闲逛长度 length/8， 最短为 4
-		if length is None:
-			length = self.length // 8
-		length = max(length, 4)
+		# 默认闲逛长度： length/8， 最短为 4
+		if steps is None:
+			steps = self.length // 8
+		steps = max(steps, 4)
 
 		is_safe = lambda x: self.is_inside(x) and x not in self.body
 
@@ -434,7 +450,7 @@ class Snake:
 		if not is_safe(path[-1] + dir_v):
 			dir_v = -dir_v
 
-		for i in range(length):
+		for i in range(steps):
 			for aim in (aim_cur, dir_v, -dir_v):
 				move_to = path[-1] + aim
 				if is_safe(move_to):
@@ -454,7 +470,7 @@ class Snake:
 
 	@count_func_time
 	def path_set_col(self, body=None):
-		"""set path to col path, fallback to wander
+		""" set path to col path, fallback to wander
 
 			1. check existing col path for current state
 
@@ -478,36 +494,42 @@ class Snake:
 				if len(path_to_check) == 0:
 					""" the extreme COL
 
-						food is reachable, but not surely safe,
-						every step forward may require a scan of path and path_col
+						food is reachable, but not safe to eat,
+						every step forward may require a scan of path and path_col,
+						while path_col scan can be cheap, path scan may be expensive
 
 						extrem COL is only possible with len(body) >= 4
 
 						to avoid scan every step, extend the path forward,
 						limit forward step within len(body)-2 to avoid dead
 						loop, and set to ~length/8 with minimum to (4-2)
+
+						it's possible that with the COL step, the snake run into
+						infinite loop in the path: for the case, only several breaks
+						have safe path to food, all the step breaks do not hit
+
+						to extend the path:
+						...
+						forward_step = (len(body) - 2)//8
+						forward_step = max(2, forward_step)
+
+						for i in range(forward_step):
+							self.path_col.append(body[-2-i])
+						...
 					"""
-
-					forward_step = (len(body) - 2)//8
-					forward_step = max(2, forward_step)
-
-					for i in range(forward_step):
-						self.path_col.append(body[-2-i])
 
 					mark_rescan = False
 				else:
-					""" COL with blank between head and tail
+					""" COL with blank between head and tail """
 
-						when the col path is end, may or may not be extrem COL
-					"""
 					# generate body mask map to speed up path_col check
 					snake_map = np.zeros((self.area_w, self.area_h), dtype='bool')
 					for elem in self.body:
 						snake_map[elem.x, elem.y] = True
 
 					for elem in path_to_check:
+						# if any block run into body, rescan
 						if snake_map[elem.x, elem.y]:
-							# if any block run into body, rescan
 							break
 					else:
 						mark_rescan = False
@@ -515,12 +537,11 @@ class Snake:
 		if mark_rescan:
 			self.path_col, _graph = self.scan_cycle_of_life()
 
-		# final check for col
-		if len(self.path_col) > 0:
+		# final check for col, then set path
+		if len(self.path_col) > 0:		# apply and reset path_col
 			self.path = self.path_col
-			# reset COL path after apply COL
 			self.path_col = []
-		else:
+		else:							# fallback to wander path
 			self.path_set_wander()
 
 	#@count_func_time
@@ -547,8 +568,13 @@ class Snake:
 
 		# save path for COL if exist
 		if len(self.path) > 0:
-			new_body = self.body_after_eat()
+			# construct body after eat food
+			new_body = self.body_after_step_on_path( self.body, self.path,
+					self.graph[self.food.x, self.food.y]-1)
+			new_body.insert(0, self.food)
+
 			path, graph = self.scan_cycle_of_life(new_body)
+
 			if len(path) > 0:	# food safe, save col path, go eat food
 				self.path_col = path
 				return True
