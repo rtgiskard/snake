@@ -518,8 +518,8 @@ class SnakeApp(Gtk.Application):
 		dp.s = 0.9						# body block side length, relative to dp.l
 		dp.r = 0.2						# body block corner radius, relative to dp.l
 
-		dp.fn = 'monospace'				# text font name
-		dp.fs = 0.7						# dist map font size, relative to dp.l
+		dp.fn = 'monospace'				# dist mao text font name
+		dp.fs = 0.7						# dist map text font size, relative to dp.l
 
 		# snake alive cache
 		dp.died = self.snake.is_died()
@@ -537,8 +537,8 @@ class SnakeApp(Gtk.Application):
 		dp.rgba_path = (0, 1, 1, 0.6)			# path
 		dp.rgba_text = (0, 1, 0, 0.8)			# text for dist map
 		dp.rgba_over = (1, 0, 1, 0.8)			# game over text
-		dp.rgba_edge = (0,0,1,1)				# edge: blue
-		dp.rgba_black = (0,0,0,1)				# black reference
+		dp.rgba_edge = (0, 0, 1, 1)				# edge: blue
+		dp.rgba_black = (0, 0, 0, 1)			# black reference
 
 		# fg == bg == black: colorful
 		if (dp.rgba_bg == dp.rgba_fg == dp.rgba_black):
@@ -781,13 +781,14 @@ class SnakeApp(Gtk.Application):
 	def draw_init(self, dp):
 		cr = dp.cr
 
-		context = self.draw.get_style_context()
-		Gtk.render_background(context, cr, 0, 0, dp.wd_w(), dp.wd_h())
-
 		# draw background
 		cr.set_source_rgba(*dp.rgba_bg)
 		cr.rectangle(0,0, dp.wd_w(), dp.wd_h())
 		cr.fill()
+
+		# or use theme-provided background
+		#context = self.draw.get_style_context()
+		#Gtk.render_background(context, cr, 0, 0, dp.wd_w(), dp.wd_h())
 
 		# make sure center is center
 		translate = (
@@ -797,7 +798,7 @@ class SnakeApp(Gtk.Application):
 		cr.transform(cairo.Matrix(dp.scale, 0, 0, dp.scale, *translate))
 
 		cr.set_line_join(cairo.LINE_JOIN_ROUND)
-		cr.set_tolerance(0.1)
+		cr.set_tolerance(0.2)
 
 		cr.save()
 		cr.scale(dp.l, dp.l)
@@ -922,8 +923,7 @@ class SnakeApp(Gtk.Application):
 		text_reset = 'Press "r" to reset'
 
 		cr.set_source_rgba(*dp.rgba_over)
-		cr.select_font_face(dp.fn, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-
+		cr.select_font_face('Serif', cairo.FONT_SLANT_OBLIQUE, cairo.FONT_WEIGHT_BOLD)
 		cr.set_font_size(48)
 		extent_go = cr.text_extents(text_go)
 
@@ -932,6 +932,7 @@ class SnakeApp(Gtk.Application):
 				(dp.l * dp.area_h - extent_go.height)/2)
 		cr.show_text(text_go)
 
+		cr.select_font_face(dp.fn, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
 		cr.set_font_size(20)
 		extent_reset = cr.text_extents(text_reset)
 

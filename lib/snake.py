@@ -285,8 +285,8 @@ class Snake:
 			start = body[0]
 
 		# in np, it's (row, col), it's saved/read in transposed style
-		map_dist = np.zeros(array_dim, dtype=np.int32)
-		map_parent = np.zeros(array_dim, dtype=Vector)
+		map_dist = np.zeros(array_dim, dtype=np.int32)	# dist from start to current
+		map_aim = np.zeros(array_dim, dtype=Vector)		# parent + aim = current
 
 		# set cost() and end_set() according to end
 		if end is None:
@@ -302,11 +302,11 @@ class Snake:
 		# 优先队列
 		pqueue = []
 
+		# pqueue: (cost, push_ct, elem)
 		# push_ct 避免比较 vector，同时保证：相同优先级 FIFO
 		push_ct = 0
 		heapq.heappush(pqueue, (0, push_ct, start))
-		# set the start parent to start - aim_0
-		map_parent[start.x, start.y] = start - aim_0
+		map_aim[start.x, start.y] = aim_0
 
 		# generate map_dist
 		while len(pqueue) > 0:
@@ -321,10 +321,13 @@ class Snake:
 					end = elem
 				break
 
-			# neighbors of head
-			neighbors = [ elem + aim for aim in VECTORS() ]
-			# can not go backward
-			neighbors.remove(map_parent[elem.x, elem.y])
+			"""
+			to get a straight path, the neighbors' sequence should be fixed.
+			prefer nb on forward
+			"""
+			aim = map_aim[elem.x, elem.y]
+			# neighbors of head, todo: random turn?
+			neighbors = [ elem + aim for aim in (aim, aim.T, -aim.T) ]
 
 			# the tail have moved forward
 			void_set = body[:-dist_elem-1]
@@ -333,7 +336,7 @@ class Snake:
 				if rect.is_inside(nb) and map_dist[nb.x, nb.y] == 0:
 					if nb not in void_set:
 						map_dist[nb.x, nb.y] = dist_elem + 1
-						map_parent[nb.x, nb.y] = elem
+						map_aim[nb.x, nb.y] = nb - elem
 
 						push_ct += 1
 						heapq.heappush(pqueue, (cost(nb), push_ct, nb))
@@ -344,7 +347,7 @@ class Snake:
 			# the `do .. while()` is neccessary for the case head == end,
 			# eg. snake with length equals 1 in COL scan
 			while True:
-				path.insert(0, map_parent[path[0].x, path[0].y])
+				path.insert(0, path[0] - map_aim[path[0].x, path[0].y])
 				if path[0] == start:
 					break
 		else:
@@ -420,7 +423,7 @@ class Snake:
 		# 默认闲逛长度 length/8， 最短为 4
 		if length is None:
 			length = self.length // 8
-		length = min(length, 4)
+		length = max(length, 4)
 
 		is_safe = lambda x: self.is_inside(x) and x not in self.body
 
@@ -574,6 +577,7 @@ class Snake:
 		if next_id < len(self.path):
 			return self.path[next_id] - self.head
 		else:
+			# todo: return None for end of path, and clear path?
 			# reach the end of path (for path from wander)
 			# keep aim for the step to exit path
 			return self.path[-1] - self.path[-2]
@@ -609,22 +613,23 @@ class Snake:
 
 	def get_auto_aim(self, mode, md_sub=True):
 		"""
-		return None if no valid aim, which means died and just keep aim
+		return None if no valid aim, which means died
 
-		take care of the init operation for conrresponding auto mode
+		the fallback aim:
+			1. try to keep direction
+			2. if need to turn, random turn
 		"""
+
+		# for fallback, always try aim first, the default
+		aim_T = random.choice((self.aim.T, -self.aim.T))
+		aim_choices = [ self.aim, aim_T, -aim_T ]
 
 		if mode == AutoMode.GRAPH:
 			aim_next = self.get_aim_path()
-
 		elif mode == AutoMode.GREEDY:
 			aim_next = self.get_aim_greedy(md_sub)
-
-		else:				# random
-			aim_next = None
-
-		aim_choices = [ self.aim, self.aim.T, -self.aim.T ]
-		aim_choices = [ fb for fb in random_seq(aim_choices) ]
+		else:	# RANDOM
+			aim_next = random.choice(aim_choices)
 
 		if aim_next:
 			aim_choices.remove(aim_next)
