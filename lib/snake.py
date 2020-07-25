@@ -519,7 +519,20 @@ class Snake:
 
 					mark_rescan = False
 				else:
-					""" COL with blank between head and tail """
+					""" COL with blank between head and tail
+
+					case 1: after the path, get col path with length 2
+					case 2: after the path, get col path still longer than 2
+
+					with any case, the snake will be able to reach food on next scan,
+						weather safe or not safe to eat
+
+					if the next path to food is not safe,
+						for case 1, scan may happen at every step, which could be slow,
+							and draw update may not happen if too slow
+						for case 2, scan happens at the end of path, but the snake may
+							end in infinite loop in the path if every break is not safe
+					"""
 
 					# generate body mask map to speed up path_col check
 					snake_map = np.zeros((self.area_w, self.area_h), dtype='bool')
@@ -544,7 +557,7 @@ class Snake:
 			self.path_set_wander()
 
 	#@count_func_time
-	def update_paths_and_graph(self):
+	def update_path_and_graph(self):
 		""" op pack for all path rescan and update
 
 			return: bool
@@ -586,26 +599,23 @@ class Snake:
 
 
 	def get_aim_path(self):
-		""" just follow current graph path
+		""" just follow current path
 
-			the path has at least two element
+			path has at least two element
 
-			keep direction on exit path
-			return None if path not valid or head not in path
+			return None:
+				. path not valid
+				. head not in path
+				. at end of path
 		"""
 		try:
 			# find current head in path
 			next_id = self.path.index(self.head) + 1
+			assert next_id < len(self.path)
 		except:
 			return None
 
-		if next_id < len(self.path):
-			return self.path[next_id] - self.head
-		else:
-			# todo: return None for end of path, and clear path?
-			# reach the end of path (for path from wander)
-			# keep aim for the step to exit path
-			return self.path[-1] - self.path[-2]
+		return self.path[next_id] - self.head
 
 	def get_aim_greedy(self, md_diag=True):
 		pd_cross = self.aim.pd_cross(self.vec_head2food)

@@ -182,7 +182,7 @@ class Handler:
 			if KeyName == 'G':
 				if not app.dpack.died:
 					# scan only on alive
-					app.snake.update_paths_and_graph()
+					app.snake.update_path_and_graph()
 				app.data['show_graph'] = True
 			else:
 				app.data['show_graph'] = not app.data['show_graph']
@@ -397,7 +397,7 @@ class SnakeApp(Gtk.Application):
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
 
 			self.lb_length.set_text('{}'.format(self.snake.length))
-			self.check_update_after_move()
+			self.check_and_update_after_move()
 		else:
 			self.dpack.died = True
 			self.timeout_id = None
@@ -407,21 +407,20 @@ class SnakeApp(Gtk.Application):
 		self.draw.queue_draw()
 
 	#@count_func_time
-	def check_update_after_move(self):
+	def check_and_update_after_move(self):
 		"""
-		what and when to update:
-		1. the graph
-			1.1 eat food
-			1.2 off-path: head not in path
-			1.3 force update
-		2. the graph path
-			2.1 after graph update
+		when to update:
+		. eat food
+		. off-path: head not in path
+		. end of path
+		. force update
 		"""
 		# if in graph-auto mode
 		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
-			# if eat food on move, or off-path
-			if self.snake.path is None or self.snake.head not in self.snake.path:
-				self.snake.update_paths_and_graph()
+			# if eat food on move, off-path, or at end of path
+			if self.snake.path is None or self.snake.head not in self.snake.path[:-1]:
+				self.snake.update_path_and_graph()
+
 
 	## dialog related ##
 
