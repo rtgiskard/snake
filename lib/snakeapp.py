@@ -15,7 +15,6 @@ import cairo
 from .datatypes import *
 from .decorator import *
 from .dataref import *
-from .functions import *
 from .snake import Snake
 
 from . import NAME, VERSION, AUTHOR, COPYRIGHT, LICENSE_TYPE
@@ -265,6 +264,12 @@ class SnakeApp(Gtk.Application):
 				'show_trace': False,
 				}
 
+		# which state to save on game save
+		self.state_to_dump = (
+				'block_area', 'bg_color', 'fg_color', 'speed', 'tg_auto',
+				'auto_mode', 'sub_switch', 'show_graph', 'show_trace'
+				)
+
 		# 注意绘图座标系正负与窗口上下左右的关系
 		self.map_arrow = {
 				'up': (PixbufRotation.NONE, VECTORS.UP),
@@ -281,6 +286,8 @@ class SnakeApp(Gtk.Application):
 
 		self.timeout_id = None
 		self.about_dialog = None
+
+	## game op: reset, save/load ##
 
 	def reset_game(self, reset_all=False):
 		# reset snake and app
@@ -311,6 +318,112 @@ class SnakeApp(Gtk.Application):
 			self.data['block_area'] = {'width':40, 'height':28}
 
 		self.init_state_from_data()
+
+	def save_or_load_game(self, is_save=True):
+		""" pause on save or load """
+
+		self.tg_run.set_active(False)
+
+		filename = self.run_filechooser(is_save)
+
+		if filename is None:
+			return True
+
+		if is_save:
+			text = 'save'
+			with open(filename, 'w') as fd:
+				json.dump(self.dump_data_json(), fd)
+				return True
+		else:
+			text = 'load'
+			with open(filename, 'r') as fd:
+				if self.load_data_json(json.load(fd)):
+					return True
+
+		# pop dialog for failed operation
+		self.show_warning_dialog('Failed to {} game'.format(text))
+
+		return False
+
+	def dump_data_json(self):
+		snake_data = self.snake.snake_dump()
+		app_data = { x:self.data[x] for x in self.state_to_dump }
+
+		# convert auto_mode to str
+		app_data['auto_mode'] = app_data['auto_mode'].name
+
+		return { 'snake': snake_data, 'app': app_data }
+
+	def load_data_json(self, data):
+		# reset current game
+		self.reset_game(reset_all=True)
+
+		# load snake first
+		if not self.snake.snake_load(data['snake']):
+			return False
+
+		# load data for app, without verification
+		# load only keys in data and state_to_dump
+		for key in data['app'].keys():
+			if key in self.state_to_dump:
+				self.data[key] = data['app'][key]
+
+		# convert auto_mode back to enum
+		self.data['auto_mode'] = AutoMode[self.data['auto_mode']]
+
+		# recover gui state, set snake length label
+		self.init_state_from_data()
+
+		# pause and de-sensitive combo_entry after restore
+		self.tg_run.set_active(False)
+		self.area_combo.set_sensitive(False)
+
+		return True
+
+	## the real snake ##
+
+	#@count_func_time
+	def timer_move(self, data):
+		if self.data['tg_auto'] and not self.snake_aim_buf:
+			aim = self.snake.get_auto_aim(self.data['auto_mode'], self.data['sub_switch'])
+		else:
+			aim = self.snake_aim_buf
+			self.snake_aim_buf = None
+
+		if self.snake.move(aim):
+			""" if current function not end in time, the timeout callback will
+			be delayed, which can be checked with time.process_time_ns() print
+			"""
+			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
+
+			self.lb_length.set_text('{}'.format(self.snake.length))
+			self.check_update_after_move()
+		else:
+			self.dpack.died = True
+			self.timeout_id = None
+			self.tg_run.set_sensitive(False)
+			print('game over, died')
+
+		self.draw.queue_draw()
+
+	#@count_func_time
+	def check_update_after_move(self):
+		"""
+		what and when to update:
+		1. the graph
+			1.1 eat food
+			1.2 off-path: head not in path
+			1.3 force update
+		2. the graph path
+			2.1 after graph update
+		"""
+		# if in graph-auto mode
+		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
+			# if eat food on move, or off-path
+			if self.snake.path is None or self.snake.head not in self.snake.path:
+				self.snake.update_paths_and_graph()
+
+	## dialog related ##
 
 	def run_filechooser(self, is_save=True):
 		if is_save:
@@ -385,66 +498,7 @@ class SnakeApp(Gtk.Application):
 		dialog.connect('response', lambda *args: dialog.destroy())
 		dialog.show()
 
-	def save_or_load_game(self, is_save=True):
-		# pause game
-		self.tg_run.set_active(False)
-
-		filename = self.run_filechooser(is_save)
-
-		if filename is None:
-			return True
-
-		if is_save:
-			text = 'save'
-			with open(filename, 'w') as fd:
-				json.dump(self.save_data(), fd)
-				return True
-		else:
-			text = 'load'
-			with open(filename, 'r') as fd:
-				if self.load_data(json.load(fd)):
-					return True
-
-		# pop dialog for failed operation
-		self.show_warning_dialog('Failed to {} game'.format(text))
-
-		return False
-
-	def save_data(self):
-		snake_data = self.snake.snake_save()
-		app_data = { x:self.data[x] for x in [
-			'block_area', 'bg_color', 'fg_color', 'speed',
-			'tg_auto', 'auto_mode', 'sub_switch', 'show_graph' ] }
-
-		# convert auto_mode to str
-		app_data['auto_mode'] = app_data['auto_mode'].name
-
-		return { 'snake': snake_data, 'app': app_data }
-
-	def load_data(self, data):
-		# reset current game
-		self.reset_game(reset_all=True)
-
-		# load snake first
-		if not self.snake.snake_load(data['snake']):
-			return False
-
-		# load data for app, without verification
-		for x in [ 'block_area', 'bg_color', 'fg_color', 'speed',
-			'tg_auto', 'auto_mode', 'sub_switch', 'show_graph' ]:
-			self.data[x] = data['app'][x]
-
-		# convert auto_mode back to enum
-		self.data['auto_mode'] = AutoMode[self.data['auto_mode']]
-
-		# recover gui state, set snake length label
-		self.init_state_from_data()
-
-		# pause and de-sensitive combo_entry after restore
-		self.tg_run.set_active(False)
-		self.area_combo.set_sensitive(False)
-
-		return True
+	## ui related op ##
 
 	def init_state_from_data(self):
 		"""called on init_ui, reset, load game"""
@@ -724,47 +778,6 @@ class SnakeApp(Gtk.Application):
 		self.window.show_all()
 		# remove focus on init, must after show
 		self.window.set_focus(None)
-
-	#@count_func_time
-	def check_update_after_move(self):
-		"""
-		what and when to update:
-		1. the graph
-			1.1 eat food
-			1.2 off-path: head not in path
-			1.3 force update
-		2. the graph path
-			2.1 after graph update
-		"""
-		# if in graph-auto mode
-		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
-			# if eat food on move, or off-path
-			if self.snake.path is None or self.snake.head not in self.snake.path:
-				self.snake.update_paths_and_graph()
-
-	#@count_func_time
-	def timer_move(self, data):
-		if self.data['tg_auto'] and not self.snake_aim_buf:
-			aim = self.snake.get_auto_aim(self.data['auto_mode'], self.data['sub_switch'])
-		else:
-			aim = self.snake_aim_buf
-			self.snake_aim_buf = None
-
-		if self.snake.move(aim):
-			""" if current function not end in time, the timeout callback will
-			be delayed, which can be checked with time.process_time_ns() print
-			"""
-			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
-
-			self.lb_length.set_text('{}'.format(self.snake.length))
-			self.check_update_after_move()
-		else:
-			self.dpack.died = True
-			self.timeout_id = None
-			self.tg_run.set_sensitive(False)
-			print('game over, died')
-
-		self.draw.queue_draw()
 
 	## Draw related ##
 

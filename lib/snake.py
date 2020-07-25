@@ -9,7 +9,6 @@ import numpy as np
 from .datatypes import *
 from .decorator import *
 from .dataref import *
-from .functions import *
 
 """
 Snake:
@@ -119,7 +118,7 @@ class Snake:
 
 			return True
 
-	def snake_save(self):
+	def snake_dump(self):
 		# return body with list() for direct dump
 		return {
 				'area': [ self.area_w, self.area_h ],
