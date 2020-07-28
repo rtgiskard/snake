@@ -19,6 +19,7 @@ from .snake import Snake
 
 from . import NAME, VERSION, AUTHOR, COPYRIGHT, LICENSE_TYPE
 
+iprint = lambda msg: print('[INFO]: ' + msg)
 
 class Draw_Pack:
 	def __init__(self, cr=None):
@@ -192,6 +193,7 @@ class Handler:
 		if app.dpack.died:
 			if KEY_PRESS and keyname == 'r':
 				app.reset_game()
+				iprint('game reset')
 
 			return True
 
@@ -219,15 +221,20 @@ class Handler:
 		elif KEY_PRESS and keyname == 'bracketright':
 			app.bt_speed.spin(Gtk.SpinType.STEP_FORWARD, 1)
 
+		elif KEY_PRESS and KeyName == 'R':
+			app.snake.reseed()
+			iprint('snake random: reseed')
+
 		elif KEY_PRESS and keyname == 's':
 			app.data['sub_switch'] = not app.data['sub_switch']
+			iprint('sub switch: {}'.format(app.data['sub_switch']))
 
 		elif KEY_PRESS and keyname == 'm':
 			automode_list = list(AutoMode)
 			id_cur = automode_list.index(app.data['auto_mode'])
 			id_next = (id_cur + 1) % len(automode_list)
 			app.data['auto_mode'] = automode_list[id_next]
-			print('auto_mode: {}'.format(app.data['auto_mode'].name))
+			iprint('auto_mode: {}'.format(app.data['auto_mode'].name))
 
 		return True
 
@@ -392,7 +399,7 @@ class SnakeApp(Gtk.Application):
 
 		if self.snake.move(aim):
 			""" if current function not end in time, the timeout callback will
-			be delayed, which can be checked with time.process_time_ns() print
+			be delayed, which can be checked with time.process_time_ns()
 			"""
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
 
@@ -402,7 +409,7 @@ class SnakeApp(Gtk.Application):
 			self.dpack.died = True
 			self.timeout_id = None
 			self.tg_run.set_sensitive(False)
-			print('game over, died')
+			iprint('game over, died')
 
 		self.draw.queue_draw()
 

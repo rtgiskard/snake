@@ -12,15 +12,18 @@ class Dot:
 	def __repr__(self):
 		return '({}, {})'.format(self.x, self.y)
 
+	def __eq__(self, vec):
+		return self.x == vec.x and self.y == vec.y
+
+	def __hash__(self):
+		return hash((self.x, self.y))
+
 class Vector(Dot):
 	def __init__(self, x=0, y=0):
 		super().__init__(x, y)
 
 	def __neg__(self):
 		return Vector(-self.x, -self.y)
-
-	def __eq__(self, vec):
-		return self.x == vec.x and self.y == vec.y
 
 	def __add__(self, vec):
 		return Vector(self.x + vec.x, self.y + vec.y)
