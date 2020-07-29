@@ -36,12 +36,11 @@ class Snake:
 		return self.area_w * self.area_h
 
 	@property
-	def vec_head2food(self):
-		return self.food - self.head
-
-	@property
 	def head(self):
 		return self.body[0]
+
+	def is_full(self):
+		return self.length == self.area_size
 
 	def is_died(self):
 		return self.head in self.body[1:] or not self.is_inside(self.head)
@@ -50,12 +49,32 @@ class Snake:
 		return ( point.x >= 0 and point.x < self.area_w
 				and point.y >= 0 and point.y < self.area_h )
 
-	def is_full(self):
-		return self.length == self.area_size
-
 	def is_aim_valid(self, aim):
+		""" within single step forward, the snake is impossible to run into:
+			body[0:3]: as the first 3 block is impossible to be around head
+			body[-1]: the snake is moving forward
+		"""
 		head_next = self.head + aim
 		return self.is_inside(head_next) and head_next not in self.body[3:-1]
+
+	def is_move_safe(self, pos=None, body=None, step=0):
+		""" whether a move is safe
+
+			only check the original body area, the move stratage should make
+			sure that the snake will not run into the path again
+
+			pos: the position to move to
+			body: what is moving
+			step: step that the body has moved before
+		"""
+		if body is None: body = self.body
+		if pos is None: pos = body[0] + self.aim
+
+		return self.is_inside(pos) and pos not in body[:-(i+1)]
+
+
+	def snake_reseed(self):
+		random.seed()
 
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
@@ -68,9 +87,6 @@ class Snake:
 		self.path_unsafe = None		# cached unsafe path to food
 
 		# re-seed on reset
-		random.seed()
-
-	def snake_reseed(self):
 		random.seed()
 
 	def snake_load(self, data):
@@ -374,7 +390,11 @@ class Snake:
 		return (path, map_dist)
 
 	def scan_wrapper(self, body=None, aim=None, target=None):
-		""" a scan wrapper for BFS search """
+		""" a scan wrapper for BFS search
+
+			parameter: None for current body
+			return: (path, graph)
+		"""
 
 		if body is None:
 			body = self.body
@@ -397,7 +417,6 @@ class Snake:
 	@count_func_time
 	def scan_path_and_graph(self, body=None, aim=None):
 		""" scan path for head to target for given body """
-
 		return self.scan_wrapper(body, aim, self.food)
 
 	@count_func_time
@@ -405,46 +424,124 @@ class Snake:
 		""" scan path for head to tail for given body
 
 			col path:
-				1, start == body[0], end in body
+				1, path_col[0] == body[0], end in body
 				2. any elem in between is not in body
 					as it's the shortest path to form the cycle
-				3. self.path_col is only set/reset after eat food safely or follow COL
 
-			parameter: None for current body
-			return: (path, graph)
+			for COL with head following tail:
+				food is reachable, but not safe to eat,
+				every step forward may require a scan of path and path_col, while
+				path_col scan can be cheap, path scan may be expensive, and draw
+				update may not happen if too slow
+
+				extreme COL is only possible with len(body) >= 4
+
+				it's possible that with the COL step, the snake run into infinite loop
+				in the path: if only several breaks have safe path and all the step
+				breaks do not hit
+
+			for COL with blank between head and tail:
+				case 1: after the path, get col path with length 2
+				case 2: after the path, get col path still longer than 2
+
+				with any case, the snake will be able to reach food on next scan,
+					whether safe or not safe to eat
+
+				if the next path to food is not safe,
+					for case 1, it becomes extreme COL
+					for case 2, scan happens at the end of path, but the snake may
+						end in infinite loop in the path if every break is not safe
+
+			to avoid unneccessary scan and dead loop:
+				cache unsafe path, adjust col path after scan
 		"""
 		return self.scan_wrapper(body, aim, None)
 
-	"""
-	for COL with head following tail:
-		food is reachable, but not safe to eat,
-		every step forward may require a scan of path and path_col,
-		while path_col scan can be cheap, path scan may be expensive
+	def scan_path_wander(self, body=None, step=None):
+		"""
+			aim, trd, -aim
+			v     . .   . .
+			. .   > .   ^
+			. .     .
+		"""
 
-		extrem COL is only possible with len(body) >= 4
+		if body is None: body = self.body
+		if step is None: step = self.length // 8
+		step = max(step, 4)
 
-		to avoid scan every step, extend the path forward,
-		limit forward step within len(body)-2 to avoid dead
-		loop, and set to ~length/8 with minimum to (4-2)
+		aim = self.aim
 
-		it's possible that with the COL step, the snake run into
-		infinite loop in the path: for the case, only several breaks
-		have safe path to food, all the step breaks do not hit
+		# select trend, also make sure (body[0] + trend) is safe
+		for trend in (aim.T, -aim.T):
+			if self.is_move_safe(body[0] + trend, body, step=0):
+				trd = trend
+				break
+		else:		# no safe trend, no wander path
+			return []
 
-	for COL with blank between head and tail:
-		case 1: after the path, get col path with length 2
-		case 2: after the path, get col path still longer than 2
+		# check set
+		chk_0 = lambda pos: [				# aim, if failed check, turn
+					[pos + aim, 1],				# on aim
+					[pos + aim + trd, 2],		# next turn possibility
+					[pos + 2*aim, 2],			# exit path
+					[pos + 2*aim + trd, 3] ]	# exit path
+		chk_1 = lambda pos: [				# trd, if failed, exit path
+					[pos - aim, 1],				# on turn
+					[pos + trd, 1],				# exit path
+					[pos - aim + trd, 2],		# exit path
+					[pos + aim + trd, 2] ]		# exit path
+		chk_2 = lambda pos: [				# -aim, if failed, turn + aim
+					[pos - aim, 1],				# on -aim
+					[pos - aim + trd, 2] ]		# next turn possibility
 
-		with any case, the snake will be able to reach food on next scan,
-			whether safe or not safe to eat
+		# a cycle of wrap: aim, trd, (-aim, trd)
+		chk_list = ( chk_0, chk_1, chk_2 )
 
-		if the next path to food is not safe,
-			for case 1, scan may happen at every step, which could be slow,
-				and draw update may not happen if too slow
-			for case 2, scan happens at the end of path, but the snake may
-				end in infinite loop in the path if every break is not safe
-	"""
+		checked = set()
+		path = [ body[0] ]
 
+		step_ct = 0
+		state = 0
+
+		while step_ct < step:
+			chk = chk_list[state](path[-1])
+
+			if wander_move_check(body, step_ct, chk, checked):
+				path.append(chk[0][0])
+			else:
+				if state & 1:
+					# state: 1, 3: turn failed, exit
+					path.append(path[-1] + aim)
+					break
+				else:
+					# state: 0, 2: aim/-aim failed, turn
+					path.append(path[-1] + trd)
+
+				state += 1
+				state %= len(chk_list)
+
+			step_ct += 1
+
+		if len(path) > 1:
+			return path
+		else:
+			return []
+
+	def wander_move_check(self, body, step, uncheck, checked):
+		""" check four block
+
+			return: bool
+				True: if all clear
+				False: move on aim will break the wander
+		"""
+		for pos in uncheck:
+			if pos[0] not in checked:
+				if self.is_move_safe(pos[0], body, step + pos[1]):
+					checked.add(pos[0])
+				else:
+					return False
+
+		return True
 
 	def validate_col_path_on_body(self, path, body):
 		""" validate the col path on given body """
@@ -484,11 +581,8 @@ class Snake:
 		else:							# fallback to wander path
 			self.path_set_wander()
 
-	def scan_path_wander(self, body=None):
-		pass
-
 	@count_func_time
-	def path_set_wander(self, steps=None):
+	def path_set_wander(self, step=None):
 		""" 闲逛
 
 			草履虫模式：遇到障碍反向：反向意味接连转向
@@ -514,9 +608,9 @@ class Snake:
 			预留通道：aim 方向预留 1~2 个空格
 		"""
 		# 默认闲逛长度： length/8， 最短为 4
-		if steps is None:
-			steps = self.length // 8
-		steps = max(steps, 4)
+		if step is None:
+			step = self.length // 8
+		step = max(step, 4)
 
 		is_safe = lambda x, i: self.is_inside(x) and x not in self.body[:-(i+1)]
 
@@ -529,7 +623,7 @@ class Snake:
 		if not is_safe(path[-1] + trd, 0):
 			trd = -trd
 
-		for i in range(steps):
+		for i in range(step):
 			for aim in (aim_cur, trd, -trd):
 				move_to = path[-1] + aim
 				if is_safe(move_to):
@@ -546,6 +640,66 @@ class Snake:
 
 		if len(path) > 1:
 			self.path = path
+
+	def adjust_path_on_unsafe(self, path_unsafe):
+		"""
+		path_unsafe: one of the shortest paths to food, any other path start
+			from the unsafe path should be longer or at least equal
+
+		compare path and unsafe path, find:
+			idx_0: where path start in unsafe path
+			idx_1: where path leave unsafe path
+			idx_2: where unsafe path leave body for the last time
+
+			if path go apart from unsafe path before unsafe path leave body
+				(not likely to happen)
+				trust path and follow path
+			if path go apart from unsafe path after unsafe path leave body
+				cut path to queue rescan
+
+			if path end in unsafe path before unsafe path leave body
+				follow unsafe path till it leaves body fot the last time
+			if unsafe path end before path go apart
+				(not likely to happen)
+				follow path
+		"""
+		idx_0 = 0		# where the match begins (first match)
+		idx_1 = 0		# where the match ends (first unmatch after match)
+		idx_2 = 0		# where the unsafe path leaves body
+
+		cmp_md = 0		# compare mode
+
+		for i in range(len(path_unsafe)):
+			if cmp_md == 0:			# find where match begins
+				if path_unsafe[i] == self.path[0]:
+					idx_0 = i
+					cmp_md = 1
+			elif cmp_md == 1:		# real check after match
+				if i-idx_0 >= len(self.path):
+					# path end in unsafe path
+					cmp_md = 2
+				elif path_unsafe[i] != self.path[i-idx_0]:
+					# path go apart from path_unsafe
+					idx_1 = i
+					break
+			elif cmp_md == 2:		# check for where unsafe path last leaves body
+				if path_unsafe[i] in self.body:
+					idx_2 = i
+
+		if idx_1 > 0:
+			# cut path at where it's apart
+			new_path = self.path[:idx_1 - idx_0 + 1]
+		elif idx_2 > 0:
+			# extend path to where unsafe path leaves body(the last one), stop
+			# in body (as unsafe path is unsafe, follow it to leave body is
+			# dangerous, but not before it leaves body for the last time)
+			new_path = self.path_unsafe[idx_0:idx_2 + 1]
+		else:
+			new_path = self.path
+
+		if len(new_path) >= 2:
+			self.path = new_path
+
 
 	#@count_func_time
 	def update_path_and_graph(self):
@@ -599,65 +753,6 @@ class Snake:
 
 		return False
 
-	def adjust_path_on_unsafe(self, path_unsafe):
-		"""
-		path_unsafe: one of the shortest paths to food, any other path start
-			from the unsafe path should be longer or at least equal
-
-		compare path and unsafe path, find:
-			idx_0: where path start in unsafe path
-			idx_1: where path leave unsafe path
-			idx_2: where unsafe path leave body for the last time
-
-			if path go apart from unsafe path before unsafe path leave body
-				(not likely to happen)
-				trust path and follow path
-			if path go apart from unsafe path after unsafe path leave body
-				cut path to queue rescan
-
-			if path end in unsafe path before unsafe path leave body
-				follow unsafe path just before unsafe path leaves body
-			if unsafe path end before path go apart
-				(not likely to happen)
-				follow path
-		"""
-		idx_0 = 0		# where the match begins (first match)
-		idx_1 = 0		# where the match ends (first unmatch after match)
-		idx_2 = 0		# where the unsafe path leaves body
-
-		cmp_md = 0		# compare mode
-
-		for i in range(len(path_unsafe)):
-			if cmp_md == 0:			# find where match begins
-				if path_unsafe[i] == self.path[0]:
-					idx_0 = i
-					cmp_md = 1
-			elif cmp_md == 1:		# real check after match
-				if i-idx_0 >= len(self.path):
-					# path end in unsafe path
-					cmp_md = 2
-				elif path_unsafe[i] != self.path[i-idx_0]:
-					# path go apart from path_unsafe
-					idx_1 = i
-					break
-			elif cmp_md == 2:		# check for where unsafe path last leaves the body
-				if path_unsafe[i] in self.body:
-					idx_2 = i
-
-		if idx_1 > 0:
-			# cut path at where it's apart
-			new_path = self.path[:idx_1 - idx_0 + 1]
-		elif idx_2 > 0:
-			# extend path to where unsafe path leaves body(the last one), stop
-			# in body (as unsafe path is unsafe, follow it to leave body is
-			# dangerous, but not before it leaves body for the last time)
-			new_path = self.path_unsafe[idx_0:idx_2 + 1]
-		else:
-			new_path = self.path
-
-		if len(new_path) >= 2:
-			self.path = new_path
-
 	def get_aim_path(self):
 		""" just follow current path
 
@@ -678,8 +773,9 @@ class Snake:
 		return self.path[next_id] - self.head
 
 	def get_aim_greedy(self, md_diag=True):
-		pd_cross = self.aim.pd_cross(self.vec_head2food)
-		pd_dot = self.aim.pd_dot(self.vec_head2food)
+		vec_head2food = self.food - self.head
+		pd_cross = self.aim.pd_cross(vec_head2food)
+		pd_dot = self.aim.pd_dot(vec_head2food)
 
 		if md_diag:
 			""" 斜线 """
