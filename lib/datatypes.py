@@ -10,7 +10,7 @@ class Dot:
 		return iter((self.x, self.y))
 
 	def __repr__(self):
-		return '({}, {})'.format(self.x, self.y)
+		return f'({self.x}, {self.y})'
 
 	def __eq__(self, vec):
 		return self.x == vec.x and self.y == vec.y
@@ -111,7 +111,7 @@ class Color_Grad:
 
 	def __getitem__(self, index):
 		if index < 0 or index >= self._n:
-			raise IndexError("color index out of range")
+			raise IndexError('color index out of range')
 		else:
 			ix = index/self._n
 

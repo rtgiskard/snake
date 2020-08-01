@@ -7,8 +7,10 @@ import json
 
 import gi
 gi.require_version('Gtk', '3.0')
+gi.require_version('PangoCairo', '1.0')
 
 from gi.repository import Gio, Gtk, Gdk, GLib
+from gi.repository import Pango, PangoCairo
 from gi.repository.GdkPixbuf import Pixbuf, PixbufRotation, InterpType
 import cairo
 
@@ -19,7 +21,7 @@ from .snake import Snake
 
 from . import NAME, VERSION, AUTHOR, COPYRIGHT, LICENSE_TYPE
 
-iprint = lambda msg: print('[INFO]: ' + msg)
+iprint = lambda msg: print(f'[INFO]: {msg}')
 
 class Draw_Pack:
 	def __init__(self, cr=None):
@@ -149,6 +151,36 @@ class Handler:
 
 	@classmethod
 	def on_keyboard_event(cls, widget, event, app):
+		"""
+			keyshot:
+
+			ui:
+				esc:		unfocus widget
+				tab:		switch focus
+				h:			hide/unhide panel
+
+			game control:
+				r:			reset after gameover
+				p:			toggle pause/continue
+				a:			toggle auto/manual
+				m:			switch auto mode
+				s:			submode switch
+
+				[]:			speed down/up
+				←→↑↓:		direction control
+
+			debug:
+				t:			toggle trace display
+				g:			toogle path and graph display
+				G:			force rescan, then display path and graph
+				x:			switch the display of (path, graph)
+				R:			snake reseed
+
+			accel:
+				<Ctrl>R		reset game
+				<Ctrl>S		pause and save game
+				<Ctrl>L		pause and load game
+		"""
 		KeyName = Gdk.keyval_name(event.keyval)
 		keyname = KeyName.lower()
 
@@ -179,6 +211,17 @@ class Handler:
 			app.data['show_trace'] = not app.data['show_trace']
 			app.draw.queue_draw()
 
+		elif KEY_PRESS and keyname == 'x':
+			"""
+				display_md:
+					True: regular: [path, graph]
+					False: unsafe: [unsafe_path/col_path, graph_col]
+			"""
+			app.data['display_md'] = not app.data['display_md']
+
+			iprint(f"display regular: {app.data['display_md']}")
+			app.draw.queue_draw()
+
 		elif KEY_PRESS and keyname == 'g':
 			if KeyName == 'G':
 				if not app.dpack.died:
@@ -188,6 +231,7 @@ class Handler:
 			else:
 				app.data['show_graph'] = not app.data['show_graph']
 
+			iprint(f"show map: {app.data['show_graph']}")
 			app.draw.queue_draw()
 
 		if app.dpack.died:
@@ -227,14 +271,14 @@ class Handler:
 
 		elif KEY_PRESS and keyname == 's':
 			app.data['sub_switch'] = not app.data['sub_switch']
-			iprint('sub switch: {}'.format(app.data['sub_switch']))
+			iprint(f"sub switch: {app.data['sub_switch']}")
 
 		elif KEY_PRESS and keyname == 'm':
 			automode_list = list(AutoMode)
 			id_cur = automode_list.index(app.data['auto_mode'])
 			id_next = (id_cur + 1) % len(automode_list)
 			app.data['auto_mode'] = automode_list[id_next]
-			iprint('auto_mode: {}'.format(app.data['auto_mode'].name))
+			iprint(f"auto_mode: {app.data['auto_mode'].name}")
 
 		return True
 
@@ -252,7 +296,7 @@ class SnakeApp(Gtk.Application):
 				'block_area': {'width':40, 'height':28},
 				'block_area_limit': {'min':10, 'max':999},
 				'block_area_scale': 1,
-				'block_area_list': ( '{0}x{0}'.format(i*20) for i in range(1, 11) ),
+				'block_area_list': ( f'{i*20}x{i*20}' for i in range(1, 11) ),
 				'bg_color': 'black',
 				'fg_color': 'grey',
 				'tg_auto': False,
@@ -267,8 +311,9 @@ class SnakeApp(Gtk.Application):
 
 				'auto_mode': AutoMode.GRAPH,
 				'sub_switch': True,
-				'show_graph': False,
 				'show_trace': False,
+				'show_graph': False,
+				'display_md': True,
 				}
 
 		# which state to save on game save
@@ -315,19 +360,20 @@ class SnakeApp(Gtk.Application):
 		self.area_combo.set_sensitive(True)
 
 		if reset_all:
+			self.data['speed'] = 8
+			self.data['fg_color'] = 'grey'
+			self.data['bg_color'] = 'black'
+			self.data['block_area'] = {'width':40, 'height':28}
 			self.data['auto_mode'] = AutoMode.GRAPH
 			self.data['sub_switch'] = True
 			self.data['show_graph'] = False
 			self.data['show_trace'] = False
-			self.data['fg_color'] = 'grey'
-			self.data['bg_color'] = 'black'
-			self.data['speed'] = 8
-			self.data['block_area'] = {'width':40, 'height':28}
+			self.data['display_md'] = True
 
 		self.init_state_from_data()
 
 	def save_or_load_game(self, is_save=True):
-		""" pause on save or load """
+		"""pause on save or load"""
 
 		self.tg_run.set_active(False)
 
@@ -348,7 +394,7 @@ class SnakeApp(Gtk.Application):
 					return True
 
 		# pop dialog for failed operation
-		self.show_warning_dialog('Failed to {} game'.format(text))
+		self.show_warning_dialog(f"Failed to {text} game")
 
 		return False
 
@@ -403,7 +449,7 @@ class SnakeApp(Gtk.Application):
 			"""
 			self.timeout_id = GLib.timeout_add(1000/self.data['speed'], self.timer_move, None)
 
-			self.lb_length.set_text('{}'.format(self.snake.length))
+			self.lb_length.set_text(f"{self.snake.length}")
 			self.check_and_update_after_move()
 		else:
 			self.dpack.died = True
@@ -425,7 +471,7 @@ class SnakeApp(Gtk.Application):
 		# if in graph-auto mode
 		if self.data['tg_auto'] and self.data['auto_mode'] == AutoMode.GRAPH:
 			# if eat food on move, off-path, or at end of path
-			if self.snake.path is None or self.snake.head not in self.snake.path[:-1]:
+			if self.snake.head not in self.snake.path[:-1]:
 				self.snake.update_path_and_graph()
 
 
@@ -487,7 +533,7 @@ class SnakeApp(Gtk.Application):
 			about_dia.set_license_type(Gtk.License.__dict__[LICENSE_TYPE])
 			about_dia.set_logo(self.pix_icon)
 			about_dia.set_destroy_with_parent(True)
-			about_dia.set_title('About {}'.format(NAME))
+			about_dia.set_title(f"About {NAME}")
 
 			about_dia.show()
 
@@ -527,11 +573,11 @@ class SnakeApp(Gtk.Application):
 		self.req_draw_size_mini()
 
 		# reset length label from snake
-		self.lb_length.set_text('{}'.format(self.snake.length))
+		self.lb_length.set_text(f"{self.snake.length}")
 
 	def get_block_area_text(self):
 		area = self.data['block_area']
-		return '{}x{}'.format(area['width'], area['height'])
+		return f"{area['width']}x{area['height']}"
 
 	def sync_block_area_from_text(self, text):
 		try:
@@ -557,9 +603,9 @@ class SnakeApp(Gtk.Application):
 			return text
 
 		if active:
-			return '<small>{}</small>/<big><b>{}</b></big>'.format(lstr, rstr)
+			return f'<small>{lstr}</small>/<big><b>{rstr}</b></big>'
 		else:
-			return '<big><b>{}</b></big>/<small>{}</small>'.format(lstr, rstr)
+			return f'<big><b>{lstr}</b></big>/<small>{rstr}</small>'
 
 	def init_draw_pack(self):
 		dp = self.dpack
@@ -594,7 +640,9 @@ class SnakeApp(Gtk.Application):
 
 		dp.rgba_mark = (*dp.rgba_bg[:3], 0.8)	# mark: use bg color, but set alpha to 0.8
 		dp.rgba_trace = (*dp.rgba_bg[:3], 0.4)	# trace: use bg color, but set alpha to 0.4
-		dp.rgba_path = (0, 1, 1, 0.6)			# path
+		dp.rgba_path = None
+		dp.rgba_path_0 = (0, 1, 1, 0.6)			# path: regular mode
+		dp.rgba_path_1 = (1, 0, 1, 0.6)			# path: unsafe mode
 		dp.rgba_text = (0, 1, 0, 0.8)			# text for dist map
 		dp.rgba_over = (1, 0, 1, 0.8)			# game over text
 		dp.rgba_edge = (0, 0, 1, 1)				# edge: blue
@@ -758,7 +806,7 @@ class SnakeApp(Gtk.Application):
 		# arrow image
 		self.arrows = {}
 		for x in [ 'up', 'down', 'left', 'right' ]:
-			self.arrows[x] = self.builder.get_object('IMG_{}'.format(x.upper()))
+			self.arrows[x] = self.builder.get_object(f'IMG_{x.upper()}')
 			self.arrows[x].set_from_pixbuf(self.pix_arrow.rotate_simple(self.map_arrow[x][0]))
 
 		# area: combo box
@@ -874,8 +922,17 @@ class SnakeApp(Gtk.Application):
 			self.draw_snake_trace(dp)
 
 		if self.data['show_graph']:
-			self.draw_snake_graph(dp)
-			self.draw_snake_path(dp)
+			if self.data['display_md']:
+				dp.rgba_path = dp.rgba_path_0
+				path, graph = (self.snake.path, self.snake.graph)
+			else:
+				dp.rgba_path = dp.rgba_path_1
+				path, graph = (self.snake.path_col, self.snake.graph_col)
+				if len(path) == 0:
+					path = self.snake.path_unsafe
+
+			self.draw_snake_graph_cairo(dp, graph)
+			self.draw_snake_path(dp, path)
 
 		if dp.died:
 			self.draw_gameover(dp)
@@ -895,9 +952,9 @@ class SnakeApp(Gtk.Application):
 		cr.stroke()
 		cr.restore()
 
-	def draw_snake_path(self, dp):
+	def draw_snake_path(self, dp, path):
 		# graph path exist and not empty
-		if self.snake.path is None or len(self.snake.path) == 0:
+		if path is None or len(path) == 0:
 			return False
 
 		cr = dp.cr
@@ -905,8 +962,8 @@ class SnakeApp(Gtk.Application):
 		cr.save()
 		cr.transform(cairo.Matrix(dp.l, 0, 0, dp.l, dp.l/2, dp.l/2))
 
-		cr.move_to(*self.snake.path[0])
-		for pos in self.snake.path[1:]:
+		cr.move_to(*path[0])
+		for pos in path[1:]:
 			cr.line_to(*pos)
 
 		cr.set_source_rgba(*dp.rgba_path)
@@ -914,8 +971,40 @@ class SnakeApp(Gtk.Application):
 		cr.stroke()
 		cr.restore()
 
-	def draw_snake_graph(self, dp):
-		if self.snake.graph is None:
+	def draw_snake_graph_pango(self, dp, graph):
+		if graph is None:
+			return False
+
+		cr = dp.cr
+
+		cr.save()
+		cr.translate(dp.l/2, dp.l/2)
+
+		font_desc = Pango.FontDescription.from_string(dp.fn)
+
+		# set obsolute size in pixel and scaled to pango size
+		font_desc.set_absolute_size(dp.fs * dp.l * Pango.SCALE)
+		font_desc.set_weight(Pango.Weight.NORMAL)
+
+		pg_layout = PangoCairo.create_layout(cr)
+		pg_layout.set_font_description(font_desc)
+
+		cr.set_source_rgba(*dp.rgba_text)
+
+		for x,y in np.transpose(graph.nonzero()):
+			dist = graph[x, y]
+			pg_layout.set_text(str(dist), -1)
+
+			# without scale, use pixel size directly
+			width, height = pg_layout.get_pixel_size()
+
+			cr.move_to(x * dp.l - width/2, y * dp.l - height/2)
+			PangoCairo.show_layout(cr, pg_layout)
+
+		cr.restore()
+
+	def draw_snake_graph_cairo(self, dp, graph):
+		if graph is None:
 			return False
 
 		cr = dp.cr
@@ -927,8 +1016,8 @@ class SnakeApp(Gtk.Application):
 		cr.select_font_face(dp.fn, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
 		cr.set_font_size(dp.fs)
 
-		for x,y in np.transpose(self.snake.graph.nonzero()):
-			dist = self.snake.graph[x, y]
+		for x,y in np.transpose(graph.nonzero()):
+			dist = graph[x, y]
 			extent = cr.text_extents(str(dist))
 			cr.move_to(x - extent.width/2, y + extent.height/2)
 			cr.show_text(str(dist))

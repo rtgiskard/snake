@@ -7,7 +7,7 @@ from functools import wraps
 def echo_func(func):
 	@wraps(func)
 	def wrapper(*args, **kwargs):
-		print('calling {} ..'.format(func.__name__))
+		print(f'calling {func.__name__} ..')
 		return func(*args, **kwargs)
 
 	return wrapper
@@ -17,7 +17,7 @@ def echo_func_count(func):
 
 	@wraps(func)
 	def wrapper(*args, **kwargs):
-		print('calling {} x{} ..'.format(func.__name__, counter[0]))
+		print(f'calling {func.__name__} x{counter[0]} ..')
 		counter[0] += 1
 		return func(*args, **kwargs)
 
@@ -35,8 +35,8 @@ def count_func_time(func):
 		ts_this = time.process_time_ns() - ts
 		ts_avg[0] += 1
 		ts_avg[1] = (ts_avg[1] * (ts_avg[0]-1) + ts_this)/ts_avg[0]
-		print('T({}) us: {:.2f}  {:.2f}:{}'.format(func.__name__,
-			ts_this/1000, ts_avg[1]/1000, ts_avg[0]))
+		print(f'T({func.__name__}) us: '
+				f'{ts_this/1000:.2f}  {ts_avg[1]/1000:.2f}:{ts_avg[0]}')
 
 		return orig_return
 
