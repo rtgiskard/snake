@@ -70,7 +70,7 @@ class Snake:
 		if body is None: body = self.body
 		if pos is None: pos = body[0] + self.aim
 
-		return self.is_inside(pos) and pos not in body[:-(i+1)]
+		return self.is_inside(pos) and pos not in body[:-(step+1)]
 
 
 	def snake_reseed(self):
@@ -80,15 +80,14 @@ class Snake:
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
 		self.aim = VECTORS.DOWN
 
+		self.snake_reseed()
 		self.food = self.new_food()
+
 		self.graph = None			# dist map for food scan
 		self.graph_col = None		# dist map for col scan
 		self.path = []				# path to follow, general lead to food
 		self.path_col = []			# path for COL, food safety check and COL cache
 		self.path_unsafe = []		# cached unsafe path to food
-
-		# re-seed on reset
-		random.seed()
 
 	def snake_load(self, data):
 		bacup_area = (self.area_w, self.area_h)
@@ -98,7 +97,10 @@ class Snake:
 			area_w, area_h = data['area']
 			body = [ Vector(*pos) for pos in data['body'] ]
 			aim = Vector(*data['aim'])
-			food = Vector(*data['food'])
+			if data['food']:
+				food = Vector(*data['food'])
+			else:
+				food = data['food']
 
 			# verify
 			# check integral
@@ -125,7 +127,7 @@ class Snake:
 				if not self.is_inside(pos):
 					raise Exception()
 
-			# convert and recover random state
+			# convert and test recover random state
 			if 'rnd_state' in data.keys():
 				data['rnd_state'][1] = tuple(data['rnd_state'][1])
 				rnd_state = tuple(data['rnd_state'])
@@ -136,21 +138,31 @@ class Snake:
 
 			return False
 		else:
+			# snake reset will change random state
 			self.snake_reset()
 
 			self.body = body
 			self.aim = aim
 			self.food = food
 
+			# restore random state after snake reset
+			if 'rnd_state' in data.keys():
+				random.setstate(rnd_state)
+
 			return True
 
 	def snake_dump(self):
-		# return body with list() for direct dump
+		if self.food:
+			food_dump = (self.food.x, self.food.y)
+		else:
+			# for final col, food is None
+			food_dump = self.food
+
 		return {
 				'area': [ self.area_w, self.area_h ],
 				'body': [ (pos.x, pos.y) for pos in self.body ],
 				'aim': ( self.aim.x, self.aim.y ),
-				'food': ( self.food.x, self.food.y ),
+				'food': food_dump,
 				'rnd_state': random.getstate()
 				}
 
@@ -361,7 +373,6 @@ class Snake:
 			to get a straight path, the neighbors' sequence should be fixed.
 			"""
 			aim = map_aim[elem.x, elem.y]
-			# neighbors of head, todo: random turn?
 			neighbors = [ elem + aim for aim in (aim, aim.T, -aim.T) ]
 
 			# the tail have moved forward
@@ -458,91 +469,46 @@ class Snake:
 		"""
 		return self.scan_wrapper(body, aim, None)
 
-	def scan_path_wander(self, body=None, step=None):
+
+	@count_func_time
+	def get_path_wander(self, step=None):
 		"""
-			aim, trd, -aim
-			v     . .   . .
-			. .   > .   ^
-			. .     .
+		about wander:
+
+			可能死循环:
+			>>>>V
+			<<^xV
+			  ^<<
+
+			解决方案：
+			1. col 路径中尽量预留一个空白
+			2. 检测循环时，启用折叠
+			3. 把空格子挪到一起
+
+			何时启用折叠：
+			1. 追尾深度过深（折叠后可能存在更优路径）
+			2. 连续多次重新计算 path (易导致超时)
+			3. 循环 COL
+
+			如何简单安全折叠：
+			1. 折叠路径须可构成 col，对于任意情况，wander 不应依赖 col
+			2. 当前 col path 为最短安全路径，折叠路径应大于 col path
+			3. 每步可选方向数量：3, col 已占 1， 另外随机选择，检测 col
+
+			wander 路径被破坏：
+			1. 正常吃完食物后，新的食物出现在 col 路径中，导致蛇身增长，col 路径失效
+
+			|
+			|v
+			|> > > > v
+			|  * < < <
+			----------
+
+			假设路径被堵
+
+			何时重置 wander info
 		"""
-
-		if body is None: body = self.body
-		if step is None: step = self.length // 8
-		step = max(step, 4)
-
-		aim = self.aim
-
-		# select trend, also make sure (body[0] + trend) is safe
-		for trend in (aim.T, -aim.T):
-			if self.is_move_safe(body[0] + trend, body, step=0):
-				trd = trend
-				break
-		else:		# no safe trend, no wander path
-			return []
-
-		# check set
-		chk_0 = lambda pos: [				# aim, if failed check, turn
-					[pos + aim, 1],				# on aim
-					[pos + aim + trd, 2],		# next turn possibility
-					[pos + 2*aim, 2],			# exit path
-					[pos + 2*aim + trd, 3] ]	# exit path
-		chk_1 = lambda pos: [				# trd, if failed, exit path
-					[pos - aim, 1],				# on turn
-					[pos + trd, 1],				# exit path
-					[pos - aim + trd, 2],		# exit path
-					[pos + aim + trd, 2] ]		# exit path
-		chk_2 = lambda pos: [				# -aim, if failed, turn + aim
-					[pos - aim, 1],				# on -aim
-					[pos - aim + trd, 2] ]		# next turn possibility
-
-		# a cycle of wrap: aim, trd, (-aim, trd)
-		chk_list = ( chk_0, chk_1, chk_2 )
-
-		checked = set()
-		path = [ body[0] ]
-
-		step_ct = 0
-		state = 0
-
-		while step_ct < step:
-			chk = chk_list[state](path[-1])
-
-			if wander_move_check(body, step_ct, chk, checked):
-				path.append(chk[0][0])
-			else:
-				if state & 1:
-					# state: 1, 3: turn failed, exit
-					path.append(path[-1] + aim)
-					break
-				else:
-					# state: 0, 2: aim/-aim failed, turn
-					path.append(path[-1] + trd)
-
-				state += 1
-				state %= len(chk_list)
-
-			step_ct += 1
-
-		if len(path) > 1:
-			return path
-		else:
-			return []
-
-	def wander_move_check(self, body, step, uncheck, checked):
-		""" check four block
-
-			return: bool
-				True: if all clear
-				False: move on aim will break the wander
-		"""
-		for pos in uncheck:
-			if pos[0] not in checked:
-				if self.is_move_safe(pos[0], body, step + pos[1]):
-					checked.add(pos[0])
-				else:
-					return False
-
-		return True
+		return []
 
 	def validate_col_path_on_body(self, path, body):
 		""" validate the col path on given body """
@@ -559,7 +525,7 @@ class Snake:
 			return False
 
 	@count_func_time
-	def get_path_on_unsafe(self, body=None):
+	def get_path_col_with_adj(self, body=None):
 		""" get path to follow if find unsafe path, prefer col path (update it
 			if invalid), fallback to wander, finally apply adjustment
 
@@ -577,82 +543,14 @@ class Snake:
 			body = self.body
 
 		# validate existing path_col, rescan path_col if not pass
-		if not self.validate_col_path_on_body(self.path_col, self.body):
-			self.path_col, self.graph_col = self.scan_cycle_of_life()
+		if not self.validate_col_path_on_body(self.path_col, body):
+			self.path_col, self.graph_col = self.scan_cycle_of_life(body)
 
-		# check col path, then set path
-		if len(self.path_col) > 0:		# apply and reset path_col
-			path = self.path_col
-		else:							# fallback to wander path
-			path = self.get_path_wander()
-
-		# check path_unsafe in case scan_path_and_graph() failed
-		if len(self.path_unsafe) > 0:
-			path = self.adjust_path_on_unsafe(path, self.path_unsafe, self.body)
-
-		return path
-
-	@count_func_time
-	def get_path_wander(self, step=None):
-		""" 闲逛
-
-			草履虫模式：遇到障碍反向：反向意味接连转向
-
-			基本策略：
-			1. 折叠前进
-				总体前进方向：与初始方向垂直
-			2. 单侧预留逃生通道，另一侧可填满
-				逃生通道侧：初始方向的反向
-			3. 闲逛路径长度：1/4 body 长度
-
-			实现：
-			1. 保持方向
-			2. 保持方向的终点判断
-			3. 转向后再次转向
-
-			todo：如前进时无法回到同侧，则放弃该方向
-				如 trd 为右方：
-					检查：右方，右前方，前方
-					如均为空，则可前进，否则转向
-				当方向为 -aim 时，检查 右前 ..
-
-			预留通道：aim 方向预留 1~2 个空格
-		"""
-		# 默认闲逛长度： length/8， 最短为 4
-		if step is None:
-			step = self.length // 8
-		step = max(step, 4)
-
-		is_safe = lambda x, i: self.is_inside(x) and x not in self.body[:-(i+1)]
-
-		path = [self.head]
-
-		aim_cur = self.aim
-		trd = self.aim.T
-
-		# 简单预判前进方向
-		if not is_safe(path[-1] + trd, 0):
-			trd = -trd
-
-		for i in range(step):
-			for aim in (aim_cur, trd, -trd):
-				move_to = path[-1] + aim
-				if is_safe(move_to):
-					path.append(move_to)
-					break
-			else:	# no valid path
-				break
-
-			if aim == trd:
-				aim_cur = -aim_cur
-			elif aim == -trd:
-				trd = -trd
-				aim_cur = -aim_cur
-
-		if len(path) > 1:
-			return path
+		# check path_col and path_unsafe in case scan_path_and_graph() failed
+		if len(self.path_col) > 0 and len(self.path_unsafe) > 0:
+			return self.adjust_path_on_unsafe(self.path_col, self.path_unsafe, body)
 		else:
-			return []
+			return self.path_col
 
 	def adjust_path_on_unsafe(self, path, path_unsafe, body):
 		"""
@@ -693,14 +591,17 @@ class Snake:
 					cmp_md = 1
 			elif cmp_md == 1:		# real check after match
 				if i-idx_0 >= len(path):
-					# path end in unsafe path
+					# path end in unsafe path, extend
 					cmp_md = 2
 				elif path_unsafe[i] != path[i-idx_0]:
-					# path go apart from path_unsafe
+					# path go apart from path_unsafe, cut
 					idx_1 = i
 					break
 			elif cmp_md == 2:		# check for where unsafe path last leaves body
-				if path_unsafe[i] in body:
+				new_body = self.body_after_step_on_path(body, path, len(path)-1)
+
+				# unsafe path can be safe if it's in the body, and lead to head
+				if path_unsafe[i] in new_body:
 					idx_2 = i
 
 		if idx_1 > 0:
@@ -720,7 +621,7 @@ class Snake:
 			return path
 
 
-	#@count_func_time
+	@count_func_time
 	def update_path_and_graph(self):
 		""" op pack for all path rescan and update
 
@@ -728,6 +629,9 @@ class Snake:
 				True: go and eat food
 				False: follow col or wander
 		"""
+		# already final COL
+		if self.food is None:
+			return True
 
 		if self.head in self.path_unsafe:
 			# if in unsafe path, reset path
@@ -753,7 +657,7 @@ class Snake:
 				# cache the col scan
 				self.path_col = path
 			else:				# food not safe, save path, follow existing COL
-				# keep exsiting path_col for get_path_on_unsafe()
+				# keep exsiting path_col for get_path_col_with_adj()
 
 				# save the scaned path to unsafe
 				self.path_unsafe = self.path
@@ -761,12 +665,23 @@ class Snake:
 				# reset path for the following if test
 				self.path = []
 
-		if len(self.path) > 0:
-			# food safe, follow path
+		# count path in body, if the overlap reach 1/4: wander
+		intersec = set(self.path[1:-1]).intersection(self.body)
+
+		if len(self.path) > 0 and len(intersec) < len(self.path)/4:
+			# food safe and no heavy overlap, follow path
 			return True
 		else:
-			# set path to col, or the fallbacked wander, with adjustment
-			self.path = self.get_path_on_unsafe()
+			# save path to unsafe path if heavy overlap
+			if len(self.path) > 0:
+				self.path_unsafe = self.path
+
+			# try wander wrap
+			self.path = self.get_path_wander()
+
+			if len(self.path) == 0:
+				# fallbacked to col with adjustment
+				self.path = self.get_path_col_with_adj()
 
 			# reset col path after applied, help to minimize check in
 			# self.validate_col_path_on_body

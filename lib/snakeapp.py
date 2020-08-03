@@ -74,11 +74,11 @@ class Handler:
 				# disable combo once snake active
 				app.area_combo.set_sensitive(False)
 
+				app.inhibit_id = app.inhibit(app.window, Gtk.ApplicationInhibitFlags.IDLE, 'Snake is running')
 				app.timeout_id = GLib.timeout_add(1000/app.data['speed'], app.timer_move, None)
 			else:
-				if app.timeout_id:
-					GLib.source_remove(app.timeout_id)
-					app.timeout_id = None
+				app.reset_timeout()
+				app.reset_inhibit()
 
 	@classmethod
 	def on_combo_changed(cls, widget, app):
@@ -336,20 +336,30 @@ class SnakeApp(Gtk.Application):
 		# for share of draw parameters
 		self.dpack = Draw_Pack()
 
+		self.inhibit_id = None
 		self.timeout_id = None
 		self.about_dialog = None
 
 	## game op: reset, save/load ##
+
+	def reset_timeout(self):
+		if self.timeout_id:
+			GLib.source_remove(self.timeout_id)
+			self.timeout_id = None
+
+	def reset_inhibit(self):
+		if self.inhibit_id:
+			self.uninhibit(self.inhibit_id)
+			self.inhibit_id = None
 
 	def reset_game(self, reset_all=False):
 		# reset snake and app
 		self.snake.snake_reset()
 		self.snake_aim_buf = None
 
-		# reset timeout id
-		if self.timeout_id:
-			GLib.source_remove(self.timeout_id)
-			self.timeout_id = None
+		# reset timeout && inihibit
+		self.reset_timeout()
+		self.reset_inhibit()
 
 		# reset widgets
 		self.tg_run.set_active(False)
@@ -454,6 +464,7 @@ class SnakeApp(Gtk.Application):
 		else:
 			self.dpack.died = True
 			self.timeout_id = None
+			self.reset_inhibit()
 			self.tg_run.set_sensitive(False)
 			iprint('game over, died')
 
