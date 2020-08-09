@@ -45,6 +45,10 @@ class Snake:
 	def is_died(self):
 		return self.head in self.body[1:] or not self.is_inside(self.head)
 
+	def is_on_edge(self, point):
+		return ( point.x == 0 or point.x == self.area_w-1
+				or point.y == 0 or point.y == self.area_h-1 )
+
 	def is_inside(self, point):
 		return ( point.x >= 0 and point.x < self.area_w
 				and point.y >= 0 and point.y < self.area_h )
@@ -88,6 +92,8 @@ class Snake:
 		self.path = []				# path to follow, general lead to food
 		self.path_col = []			# path for COL, food safety check and COL cache
 		self.path_unsafe = []		# cached unsafe path to food
+
+		self.md_wander = None
 
 	def snake_load(self, data):
 		bacup_area = (self.area_w, self.area_h)
@@ -495,7 +501,7 @@ class Snake:
 			2. 当前 col path 为最短安全路径，折叠路径应大于 col path
 			3. 每步可选方向数量：3, col 已占 1， 另外随机选择，检测 col
 
-			wander 路径被破坏：
+			col 路径被破坏：
 			1. 正常吃完食物后，新的食物出现在 col 路径中，导致蛇身增长，col 路径失效
 
 			|
@@ -508,7 +514,30 @@ class Snake:
 
 			何时重置 wander info
 		"""
-		return []
+		if self.md_wander is None:
+			return []
+		else:
+			aim_wd = self.aim.trans_linear(self.md_wander, inplace=False)
+			aim_try = (aim_wd, self.aim, -aim_wd)
+
+		for aim in aim_try:
+			if self.is_aim_valid(aim):
+				body = [self.body[0] + aim] + self.body[:-1]
+				_path, _graph = self.scan_cycle_of_life(body, aim)
+				if len(_path) > 0:
+					break
+		else:	# no safe aim to turn
+			self.md_wander = None
+			return []
+
+		# wander mode state changed
+		if aim == -aim_wd:
+			if self.md_wander == TransMatrix.ROTATE_LEFT:
+				self.md_wander = TransMatrix.ROTATE_RIGHT
+			else:
+				self.md_wander = TransMatrix.ROTATE_LEFT
+
+		return body[1::-1]
 
 	def validate_col_path_on_body(self, path, body):
 		""" validate the col path on given body """
@@ -669,12 +698,20 @@ class Snake:
 		intersec = set(self.path[1:-1]).intersection(self.body)
 
 		if len(self.path) > 0 and len(intersec) < len(self.path)/4:
+			# reset wander mode state
+			if self.md_wander is not None:
+				self.md_wander = None
+
 			# food safe and no heavy overlap, follow path
 			return True
 		else:
 			# save path to unsafe path if heavy overlap
 			if len(self.path) > 0:
 				self.path_unsafe = self.path
+
+			# todo: init wander to left
+			if self.md_wander is None:
+				self.md_wander = TransMatrix.ROTATE_LEFT
 
 			# try wander wrap
 			self.path = self.get_path_wander()
