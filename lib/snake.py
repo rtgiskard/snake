@@ -93,7 +93,7 @@ class Snake:
 		self.path_col = []			# path for COL, food safety check and COL cache
 		self.path_unsafe = []		# cached unsafe path to food
 
-		self.md_wander = None
+		self.st_wander = None
 
 	def snake_load(self, data):
 		bacup_area = (self.area_w, self.area_h)
@@ -475,6 +475,58 @@ class Snake:
 		"""
 		return self.scan_wrapper(body, aim, None)
 
+	@count_func_time
+	def get_path_wander_S(self, step=None):
+		"""todo: what if no col is present"""
+		if self.st_wander is None:
+			return []
+
+		# Attention: this rotatation is absolute, but the y axies is flipped on the screen
+		if self.st_wander in [WanderState.LEFT, WanderState.ON_LEFT]:
+			turn_matrix = TransMatrix.ROTATE_RIGHT
+		else:
+			turn_matrix = TransMatrix.ROTATE_LEFT
+
+		aim_wd = self.aim.trans_linear(turn_matrix, inplace=False)
+
+		# aim_last + aim_try == full aim range
+		if self.st_wander == WanderState.LEFT:
+			aim_try = (self.aim, -aim_wd)
+			aim_last = (aim_wd,)
+		elif self.st_wander == WanderState.RIGHT:
+			aim_try = (self.aim, -aim_wd)
+			aim_last = (aim_wd,)
+		else:
+			aim_try = (aim_wd,)
+			aim_last = (self.aim, -aim_wd)
+
+		for aim in aim_try + aim_last:
+			if self.is_aim_valid(aim):
+				body = [self.body[0] + aim] + self.body[:-1]
+				_path, _graph = self.scan_cycle_of_life(body, aim)
+				if len(_path) > 0:
+					break
+		else:	# no safe aim to turn
+			self.st_wander = None
+			return []
+
+		if aim in aim_last:
+			self.st_wander = None
+		else:
+			# track the specific status
+			if self.st_wander == WanderState.ON_RIGHT:
+				self.st_wander = WanderState.RIGHT
+			elif self.st_wander == WanderState.ON_LEFT:
+				self.st_wander = WanderState.LEFT
+
+			# wander mode state changed
+			if aim == -aim_wd:
+				if self.st_wander in [WanderState.LEFT, WanderState.ON_LEFT]:
+					self.st_wander = WanderState.ON_RIGHT
+				else:
+					self.st_wander = WanderState.ON_LEFT
+
+		return body[1::-1]
 
 	@count_func_time
 	def get_path_wander(self, step=None):
@@ -514,11 +566,17 @@ class Snake:
 
 			何时重置 wander info
 		"""
-		if self.md_wander is None:
+		if self.st_wander is None:
 			return []
+
+		# Attention: this rotatation is absolute, while the y axies is flipped on the screen
+		if self.st_wander in [WanderState.LEFT, WanderState.ON_LEFT]:
+			turn_matrix = TransMatrix.ROTATE_RIGHT
 		else:
-			aim_wd = self.aim.trans_linear(self.md_wander, inplace=False)
-			aim_try = (aim_wd, self.aim, -aim_wd)
+			turn_matrix = TransMatrix.ROTATE_LEFT
+
+		aim_wd = self.aim.trans_linear(turn_matrix, inplace=False)
+		aim_try = (aim_wd, self.aim, -aim_wd)
 
 		for aim in aim_try:
 			if self.is_aim_valid(aim):
@@ -527,15 +585,21 @@ class Snake:
 				if len(_path) > 0:
 					break
 		else:	# no safe aim to turn
-			self.md_wander = None
+			self.st_wander = None
 			return []
+
+		# track the specific status
+		if self.st_wander == WanderState.ON_RIGHT:
+			self.st_wander = WanderState.RIGHT
+		elif self.st_wander == WanderState.ON_LEFT:
+			self.st_wander = WanderState.LEFT
 
 		# wander mode state changed
 		if aim == -aim_wd:
-			if self.md_wander == TransMatrix.ROTATE_LEFT:
-				self.md_wander = TransMatrix.ROTATE_RIGHT
+			if self.st_wander in [WanderState.LEFT, WanderState.ON_LEFT]:
+				self.st_wander = WanderState.ON_RIGHT
 			else:
-				self.md_wander = TransMatrix.ROTATE_LEFT
+				self.st_wander = WanderState.ON_LEFT
 
 		return body[1::-1]
 
@@ -698,9 +762,12 @@ class Snake:
 		intersec = set(self.path[1:-1]).intersection(self.body)
 
 		if len(self.path) > 0 and len(intersec) < len(self.path)/4:
+			# and self.st_wander in [None, WanderState.ON_LEFT, WanderState.ON_RIGHT]:
+			""" todo: if wander, follow path only when it turns"""
+
 			# reset wander mode state
-			if self.md_wander is not None:
-				self.md_wander = None
+			if self.st_wander is not None:
+				self.st_wander = None
 
 			# food safe and no heavy overlap, follow path
 			return True
@@ -710,8 +777,8 @@ class Snake:
 				self.path_unsafe = self.path
 
 			# todo: init wander to left
-			if self.md_wander is None:
-				self.md_wander = TransMatrix.ROTATE_LEFT
+			if self.st_wander is None:
+				self.st_wander = WanderState.LEFT
 
 			# try wander wrap
 			self.path = self.get_path_wander()

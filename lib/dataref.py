@@ -23,6 +23,12 @@ class AutoMode(Enum):
 	GREEDY = auto()
 	RANDOM = auto()
 
+class WanderState(Enum):
+	LEFT = auto()		# already left
+	RIGHT = auto()		# already right
+	ON_LEFT = auto()	# turn on left
+	ON_RIGHT = auto()	# turn on right
+
 class DEBUG:
 	pause = False
 
