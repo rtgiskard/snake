@@ -50,15 +50,15 @@ class Draw_Pack:
 		self.cr.stroke()
 
 class Handler:
-	@classmethod
-	def on_draw(cls, widget, cr, app):
+	@staticmethod
+	def on_draw(widget, cr, app):
 		app.update_draw(cr)
 
 		# stop event pass on
 		return True
 
-	@classmethod
-	def on_toggled(cls, widget, app):
+	@staticmethod
+	def on_toggled(widget, app):
 		"""get avtive state, sync to data"""
 		active_state = widget.get_active()
 		widget_label = widget.get_child()
@@ -80,8 +80,8 @@ class Handler:
 				app.reset_timeout()
 				app.reset_inhibit()
 
-	@classmethod
-	def on_combo_changed(cls, widget, app):
+	@staticmethod
+	def on_combo_changed(widget, app):
 		t_iter = widget.get_active_iter()
 		if t_iter:
 			model = widget.get_model()
@@ -89,8 +89,8 @@ class Handler:
 
 			app.req_draw_size_mini()
 
-	@classmethod
-	def on_combo_entry_activate(cls, widget, app):
+	@staticmethod
+	def on_combo_entry_activate(widget, app):
 		entry_text = widget.get_text()
 
 		# if text not changed
@@ -120,37 +120,46 @@ class Handler:
 			# invalid text, recovered from app.data
 			widget.set_text(app.get_block_area_text())
 
-	@classmethod
-	def on_spin_value_changed(cls, widget, app):
+	@staticmethod
+	def on_spin_value_changed(widget, app):
 		app.data['speed'] = widget.get_value_as_int()
 
-	@classmethod
-	def on_color_set(cls, widget, app):
+	@staticmethod
+	def on_color_set(widget, app):
 		app.sync_color(widget)
 
-	@classmethod
-	def on_about_exit(cls, widget, response, app):
+	@staticmethod
+	def on_about(action, param, app):
+		app.show_about_dialog()
+
+	@staticmethod
+	def on_about_exit(widget, response, app):
 		widget.destroy()
 		app.about_dialog = None
 
-	@classmethod
-	def on_reset(cls, action, param, app):
+	@staticmethod
+	def on_keyshot(action, param, app):
+		app.show_shortcuts()
+
+	@staticmethod
+	def on_keyshot_exit(widget, app):
+		widget.destroy()
+		app.shortcuts = None
+
+	@staticmethod
+	def on_reset(action, param, app):
 		app.reset_game(reset_all=True)
 
-	@classmethod
-	def on_about(cls, action, param, app):
-		app.show_about_dialog()
-
-	@classmethod
-	def on_save(cls, action, param, app):
+	@staticmethod
+	def on_save(action, param, app):
 		app.save_or_load_game(is_save=True)
 
-	@classmethod
-	def on_load(cls, action, param, app):
+	@staticmethod
+	def on_load(action, param, app):
 		app.save_or_load_game(is_save=False)
 
-	@classmethod
-	def on_keyboard_event(cls, widget, event, app):
+	@staticmethod
+	def on_keyboard_event(widget, event, app):
 		"""
 			keyshot:
 
@@ -180,6 +189,7 @@ class Handler:
 				<Ctrl>R		reset game
 				<Ctrl>S		pause and save game
 				<Ctrl>L		pause and load game
+				<Ctrl>K		display the shortcuts
 		"""
 		KeyName = Gdk.keyval_name(event.keyval)
 		keyname = KeyName.lower()
@@ -339,6 +349,7 @@ class SnakeApp(Gtk.Application):
 		self.inhibit_id = None
 		self.timeout_id = None
 		self.about_dialog = None
+		self.shortcuts = None
 
 	## game op: reset, save/load ##
 
@@ -392,19 +403,20 @@ class SnakeApp(Gtk.Application):
 		if filename is None:
 			return True
 
-		if is_save:
-			text = 'save'
-			with open(filename, 'w') as fd:
-				json.dump(self.dump_data_json(), fd)
-				return True
-		else:
-			text = 'load'
-			with open(filename, 'r') as fd:
-				if self.load_data_json(json.load(fd)):
+		try:
+			if is_save:
+				text = 'save'
+				with open(filename, 'w') as fd:
+					json.dump(self.dump_data_json(), fd)
 					return True
-
-		# pop dialog for failed operation
-		self.show_warning_dialog(f"Failed to {text} game")
+			else:
+				text = 'load'
+				with open(filename, 'r') as fd:
+					if self.load_data_json(json.load(fd)):
+						return True
+		except:
+			# pop dialog for failed operation
+			self.show_warning_dialog(f"Failed to {text} game")
 
 		return False
 
@@ -526,12 +538,26 @@ class SnakeApp(Gtk.Application):
 		filter_any.add_pattern('*')
 		dialog.add_filter(filter_any)
 
+	def show_shortcuts(self):
+		if self.shortcuts:
+			self.shortcuts.present()
+		else:
+			builder = Gtk.Builder()
+			builder.add_from_file('data/ui/shortcuts.ui')
+			self.shortcuts = builder.get_object('SHORTCUTS')
+
+			self.shortcuts.set_transient_for(self.get_active_window())
+
+			# esc and close button issue 'destroy event'
+			self.shortcuts.connect('destroy', Handler.on_keyshot_exit, self)
+			self.shortcuts.show()
+
 	def show_about_dialog(self):
 		if self.about_dialog:
 			self.about_dialog.present()
 		else:
-			about_dia = Gtk.AboutDialog()
-			self.about_dialog = about_dia
+			self.about_dialog = Gtk.AboutDialog()
+			about_dia = self.about_dialog
 
 			# the close button will not issue 'close' event
 			about_dia.connect('response', Handler.on_about_exit, self)
@@ -544,8 +570,9 @@ class SnakeApp(Gtk.Application):
 			about_dia.set_license_type(Gtk.License.__dict__[LICENSE_TYPE])
 			about_dia.set_logo(self.pix_icon)
 			about_dia.set_destroy_with_parent(True)
-			about_dia.set_title(f"About {NAME}")
+			about_dia.set_title(f"关于 {NAME}")
 
+			about_dia.set_transient_for(self.get_active_window())
 			about_dia.show()
 
 	def show_warning_dialog(self, text):
@@ -635,7 +662,7 @@ class SnakeApp(Gtk.Application):
 		dp.s = 0.9						# body block side length, relative to dp.l
 		dp.r = 0.2						# body block corner radius, relative to dp.l
 
-		dp.fn = 'monospace'				# dist mao text font name
+		dp.fn = 'monospace'				# dist map text font name
 		dp.fs = 0.7						# dist map text font size, relative to dp.l
 
 		# snake alive cache
@@ -749,30 +776,37 @@ class SnakeApp(Gtk.Application):
 		self.img_logo.set_from_pixbuf(self.pix_icon.scale_simple(24, 24, InterpType.BILINEAR))
 
 	def init_menu(self):
-		menu_items = [
-				('Reset', Handler.on_reset, ['<Ctrl>R']),
-				('Save', Handler.on_save, ['<Ctrl>S']),
-				('Load', Handler.on_load, ['<Ctrl>L']),
-				('About', Handler.on_about, [])
-			]
+		menu_items = {
+				'sect_0': [
+					('重置', 'reset', Handler.on_reset, ['<Ctrl>R']),
+					('存档', 'save', Handler.on_save, ['<Ctrl>S']),
+					('读档', 'load', Handler.on_load, ['<Ctrl>L']),
+				],
+				'sect_1': [
+					('快捷键', 'keyshot', Handler.on_keyshot, ['<Ctrl>K']),
+					('关于', 'about', Handler.on_about, [])
+				] }
 
-		menu = Gio.Menu()
+		main_menu = Gio.Menu()
 
-		for item in menu_items:
-			action_name = item[0].lower()
-			action_dname = 'app.' + action_name
-			action_label = item[0]
-			action_callback = item[1]
-			action_accels = item[2]
+		for sect in menu_items.keys():
+			menu_sect = Gio.Menu()
+			main_menu.append_section(None, menu_sect)
+			for item in menu_items[sect]:
+				action_label = item[0]
+				action_name = item[1].lower()
+				action_dname = 'app.' + action_name
+				action_callback = item[2]
+				action_accels = item[3]
 
-			action = Gio.SimpleAction.new(action_name, None)
-			action.connect('activate', action_callback, self)
-			self.add_action(action)
+				action = Gio.SimpleAction.new(action_name, None)
+				action.connect('activate', action_callback, self)
+				self.add_action(action)
 
-			self.set_accels_for_action(action_dname, action_accels)
-			menu.append(action_label, action_dname)
+				self.set_accels_for_action(action_dname, action_accels)
+				menu_sect.append(action_label, action_dname)
 
-		self.set_app_menu(menu)
+		self.set_app_menu(main_menu)
 
 	def init_ui(self):
 		self.load_widgets()		# load widgets
@@ -942,7 +976,9 @@ class SnakeApp(Gtk.Application):
 				if len(path) == 0:
 					path = self.snake.path_unsafe
 
-			self.draw_snake_graph_cairo(dp, graph)
+			# 这里 cairo 直接绘制数字更有效率
+			self.draw_snake_graph_with_cairo(dp, graph)
+			#self.draw_snake_graph_with_pango(dp, graph)
 			self.draw_snake_path(dp, path)
 
 		if dp.died:
@@ -982,7 +1018,7 @@ class SnakeApp(Gtk.Application):
 		cr.stroke()
 		cr.restore()
 
-	def draw_snake_graph_pango(self, dp, graph):
+	def draw_snake_graph_with_pango(self, dp, graph):
 		if graph is None:
 			return False
 
@@ -1014,7 +1050,7 @@ class SnakeApp(Gtk.Application):
 
 		cr.restore()
 
-	def draw_snake_graph_cairo(self, dp, graph):
+	def draw_snake_graph_with_cairo(self, dp, graph):
 		if graph is None:
 			return False
 
@@ -1060,9 +1096,6 @@ class SnakeApp(Gtk.Application):
 		cr.show_text(text_reset)
 
 	## App actions ##
-
-	def do_startup(self):
-		Gtk.Application.do_startup(self)
 
 	def do_activate(self):
 		if not self.window:

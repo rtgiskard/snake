@@ -15,7 +15,7 @@ Snake:
 	1. after eat last food, no food is able to be generated,
 		the snake will keep run forever(circle of life: COL)
 	2. the snake is allowed to follow it's tail closely:
-		tail followed by head.
+		tail followed by head (no space between)
 		this is decided by is_aim_valid() and move()
 """
 
@@ -45,10 +45,6 @@ class Snake:
 	def is_died(self):
 		return self.head in self.body[1:] or not self.is_inside(self.head)
 
-	def is_on_edge(self, point):
-		return ( point.x == 0 or point.x == self.area_w-1
-				or point.y == 0 or point.y == self.area_h-1 )
-
 	def is_inside(self, point):
 		return ( point.x >= 0 and point.x < self.area_w
 				and point.y >= 0 and point.y < self.area_h )
@@ -64,7 +60,7 @@ class Snake:
 	def is_move_safe(self, pos=None, body=None, step=0):
 		""" whether a move is safe
 
-			only check the original body area, the move stratage should make
+			only check the original body area, the move strategy should make
 			sure that the snake will not run into the path again
 
 			pos: the position to move to
@@ -77,14 +73,14 @@ class Snake:
 		return self.is_inside(pos) and pos not in body[:-(step+1)]
 
 
-	def snake_reseed(self):
+	def reseed(self):
 		random.seed()
 
 	def snake_reset(self):
 		self.body = [ Vector(int(self.area_w/2), int(self.area_h/2)) ]
 		self.aim = VECTORS.DOWN
 
-		self.snake_reseed()
+		self.reseed()
 		self.food = self.new_food()
 
 		self.graph = None			# dist map for food scan
@@ -434,7 +430,7 @@ class Snake:
 
 	@count_func_time
 	def scan_path_and_graph(self, body=None, aim=None):
-		""" scan path for head to target for given body """
+		""" scan path for head to food for given body """
 		return self.scan_wrapper(body, aim, self.food)
 
 	@count_func_time
@@ -477,7 +473,6 @@ class Snake:
 
 	@count_func_time
 	def get_path_wander_S(self, step=None):
-		"""todo: what if no col is present"""
 		if self.st_wander is None:
 			return []
 
@@ -776,15 +771,15 @@ class Snake:
 			if len(self.path) > 0:
 				self.path_unsafe = self.path
 
-			# todo: init wander to left
+			# init wander with random choice
 			if self.st_wander is None:
-				self.st_wander = WanderState.LEFT
+				self.st_wander = random.choice([WanderState.LEFT, WanderState.RIGHT])
 
 			# try wander wrap
 			self.path = self.get_path_wander()
 
 			if len(self.path) == 0:
-				# fallbacked to col with adjustment
+				# fallback to col with adjustment
 				self.path = self.get_path_col_with_adj()
 
 			# reset col path after applied, help to minimize check in
