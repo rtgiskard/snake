@@ -13,7 +13,7 @@ from .dataref import *
 """
 Snake:
 	1. after eat last food, no food is able to be generated,
-		the snake will keep run forever(circle of life: COL)
+		the snake will keep run forever(cycle of life: COL)
 	2. the snake is allowed to follow it's tail closely:
 		tail followed by head (no space between)
 		this is decided by is_aim_valid() and move()
@@ -315,7 +315,7 @@ class Snake:
 				None: default to body[0]
 				for dynamic body on move, it should be body[0]
 			end: the point where search can stop
-				None for circle of life
+				None for cycle of life
 
 		return:
 			(path, graph)
